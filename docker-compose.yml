@@ -1,0 +1,28 @@
+version: '3.9'
+
+services:
+  sentinel:
+    build: .
+    container_name: sentinel-siem
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - sentinel-data:/app/backend/data
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_use_openssl_rand_hex_32}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-CHANGE_ME_refresh_secret}
+      INGEST_API_KEY: ${INGEST_API_KEY:-CHANGE_ME_ingest_key}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-90}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  sentinel-data:
+    driver: local
