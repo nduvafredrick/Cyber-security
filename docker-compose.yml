@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   sentinel:
     build: .
@@ -12,9 +10,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_use_openssl_rand_hex_32}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-CHANGE_ME_refresh_secret}
-      INGEST_API_KEY: ${INGEST_API_KEY:-CHANGE_ME_ingest_key}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      INGEST_API_KEY: ${INGEST_API_KEY:?Set INGEST_API_KEY}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?Set ADMIN_PASSWORD_HASH}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3001}
       LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-90}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
