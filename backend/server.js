@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const crypto = require('crypto');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -18,7 +19,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'events.json');
 const JWT_SECRET = process.env.JWT_SECRET;
 const INGEST_API_KEY = process.env.INGEST_API_KEY;
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(value => value.trim()).filter(Boolean);
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3001').split(',').map(o => o.trim()).filter(Boolean);
 
 if (NODE_ENV === 'production' && (!JWT_SECRET || JWT_SECRET.includes('replace') || !INGEST_API_KEY || INGEST_API_KEY.includes('replace') || !process.env.ADMIN_PASSWORD_HASH)) {
   throw new Error('Production requires JWT_SECRET, INGEST_API_KEY, and ADMIN_PASSWORD_HASH');
@@ -64,14 +65,19 @@ function normalize(input) {
   const timestamp = input.timestamp || new Date().toISOString();
   if (Number.isNaN(Date.parse(timestamp))) throw new Error('Invalid timestamp');
   const sourceIp = String(input.source_ip || input.sourceIp || 'unknown');
-  if (sourceIp !== 'unknown' && !/^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.|$)){4}$/.test(sourceIp)) throw new Error('Invalid source_ip');
+  if (sourceIp !== 'unknown' && net.isIP(sourceIp) === 0) throw new Error('Invalid source_ip: must be valid IPv4 or IPv6');
   const text = value => String(value || '').slice(0, 1000);
   return { id: `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`, timestamp: new Date(timestamp).toISOString(), severity, category: text(input.category || 'general').slice(0, 100), source_ip: sourceIp, message: text(input.message || 'Event received'), hostname: text(input.hostname || 'unknown').slice(0, 255) };
 }
 function broadcast(message) { const value = JSON.stringify(message); for (const ws of clients) if (ws.readyState === 1) ws.send(value); }
 
+app.set('trust proxy', 1);
 app.use(helmet());
-app.use(cors({ origin: (origin, callback) => !origin || allowedOrigins.includes(origin) ? callback(null, true) : callback(new Error('CORS origin denied')) }));
+app.use(cors((req, callback) => {
+  const origin = req.headers.origin;
+  const ok = !origin || allowedOrigins.includes(origin) || (origin && new URL(origin).host === req.headers.host);
+  callback(null, { origin: ok ? origin : false });
+}));
 app.use(express.json({ limit: '1mb' }));
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'sentinel-siem', events: events.length }));
 app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false }), (req, res) => {
@@ -103,6 +109,10 @@ app.get('/api/events', auth, (req, res) => {
   res.json({ events: result.slice(start, start + size), total: result.length });
 });
 app.get('/api/stats/summary', auth, (_req, res) => res.json({ totalEvents: events.length, openAlerts: alerts.filter(a => a.status === 'NEW').length, criticalEvents: events.filter(e => e.severity === 'CRITICAL').length }));
+
+// API 404 handler (before static files)
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not Found' }));
+
 app.use(express.static(path.join(__dirname, '..', 'frontend', 'dist')));
 app.get('*', (_req, res) => res.sendFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html')));
 app.use((error, _req, res, _next) => res.status(error instanceof SyntaxError ? 400 : 500).json({ error: error instanceof SyntaxError ? 'Invalid JSON body' : 'Internal server error' }));
