@@ -13,44 +13,64 @@ const bcrypt = require('bcryptjs');
 const { WebSocketServer } = require('ws');
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3001);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'events.json');
+const ALERTS_FILE = path.join(DATA_DIR, 'alerts.json');
 const JWT_SECRET = process.env.JWT_SECRET;
 const INGEST_API_KEY = process.env.INGEST_API_KEY;
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3001').split(',').map(o => o.trim()).filter(Boolean);
+const adminUser = process.env.ADMIN_USER || 'admin';
 
 if (NODE_ENV === 'production' && (!JWT_SECRET || JWT_SECRET.includes('replace') || !INGEST_API_KEY || INGEST_API_KEY.includes('replace') || !process.env.ADMIN_PASSWORD_HASH)) {
   throw new Error('Production requires JWT_SECRET, INGEST_API_KEY, and ADMIN_PASSWORD_HASH');
 }
 const jwtSecret = JWT_SECRET || 'local-development-secret';
 const ingestKey = INGEST_API_KEY || 'local-development-ingest-key';
-const adminUser = process.env.ADMIN_USER || 'admin';
 const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH || (process.env.ADMIN_PASSWORD ? bcrypt.hashSync(process.env.ADMIN_PASSWORD, 12) : null);
 if (!adminPasswordHash) throw new Error('Set ADMIN_PASSWORD_HASH or ADMIN_PASSWORD in the environment');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
-let events = fs.existsSync(DATA_FILE) ? JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) : [];
-const alerts = [];
+let events = readJson(DATA_FILE, []);
+let alerts = readJson(ALERTS_FILE, []);
 const clients = new Set();
 let writeQueued = false;
+let alertWriteQueued = false;
+const retentionDays = Math.max(1, Number(process.env.LOG_RETENTION_DAYS || 90));
 
+function readJson(file, fallback) {
+  try { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback; }
+  catch { return fallback; }
+}
+function atomicWrite(file, value) {
+  const temp = `${file}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(value));
+  fs.renameSync(temp, file);
+}
 function persist() {
   if (writeQueued) return;
   writeQueued = true;
-  setImmediate(() => {
-    writeQueued = false;
-    const temporary = `${DATA_FILE}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify(events.slice(-10000)));
-    fs.renameSync(temporary, DATA_FILE);
-  });
+  setImmediate(() => { writeQueued = false; atomicWrite(DATA_FILE, events.slice(-10000)); });
+}
+function persistAlerts() {
+  if (alertWriteQueued) return;
+  alertWriteQueued = true;
+  setImmediate(() => { alertWriteQueued = false; atomicWrite(ALERTS_FILE, alerts.slice(-5000)); });
+}
+function pruneExpiredEvents() {
+  const cutoff = Date.now() - retentionDays * 86400000;
+  const before = events.length;
+  events = events.filter(event => Date.parse(event.timestamp) >= cutoff);
+  if (events.length !== before) persist();
 }
 function publicUser(user) { return { id: user.id, username: user.username, role: user.role }; }
 function issueToken(user) { return jwt.sign(publicUser(user), jwtSecret, { expiresIn: '8h' }); }
 function auth(req, res, next) {
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  try { req.user = jwt.verify(token, jwtSecret); next(); } catch { res.status(401).json({ error: 'Authentication required' }); }
+  try { req.user = jwt.verify(token, jwtSecret); next(); }
+  catch { res.status(401).json({ error: 'Authentication required' }); }
 }
 function requireRole(role) { return (req, res, next) => req.user?.role === role ? next() : res.status(403).json({ error: 'Forbidden' }); }
 function sameSecret(provided, expected) {
@@ -65,21 +85,32 @@ function normalize(input) {
   const timestamp = input.timestamp || new Date().toISOString();
   if (Number.isNaN(Date.parse(timestamp))) throw new Error('Invalid timestamp');
   const sourceIp = String(input.source_ip || input.sourceIp || 'unknown');
-  if (sourceIp !== 'unknown' && net.isIP(sourceIp) === 0) throw new Error('Invalid source_ip: must be valid IPv4 or IPv6');
+  if (sourceIp !== 'unknown' && net.isIP(sourceIp) === 0) throw new Error('Invalid source_ip');
   const text = value => String(value || '').slice(0, 1000);
   return { id: `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`, timestamp: new Date(timestamp).toISOString(), severity, category: text(input.category || 'general').slice(0, 100), source_ip: sourceIp, message: text(input.message || 'Event received'), hostname: text(input.hostname || 'unknown').slice(0, 255) };
 }
 function broadcast(message) { const value = JSON.stringify(message); for (const ws of clients) if (ws.readyState === 1) ws.send(value); }
+function evaluateRules(event) {
+  if (event.severity !== 'HIGH' && event.severity !== 'CRITICAL') return;
+  if (!/ssh|login|authentication/i.test(`${event.category} ${event.message}`)) return;
+  const windowStart = Date.now() - 5 * 60 * 1000;
+  const count = events.filter(item => item.source_ip === event.source_ip && Date.parse(item.timestamp) >= windowStart && /failed|invalid|denied/i.test(item.message)).length;
+  if (count >= 5 && !alerts.some(a => a.source_ip === event.source_ip && a.status === 'NEW' && Date.now() - Date.parse(a.created_at) < 300000)) {
+    const alert = { id: `alert-${Date.now()}`, created_at: new Date().toISOString(), source_ip: event.source_ip, severity: 'CRITICAL', status: 'NEW', title: 'Possible brute-force authentication attack', count };
+    alerts.push(alert); persistAlerts(); broadcast({ type: 'alert', alert });
+  }
+}
 
-app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors((req, callback) => {
   const origin = req.headers.origin;
-  const ok = !origin || allowedOrigins.includes(origin) || (origin && new URL(origin).host === req.headers.host);
+  let sameHost = false;
+  try { sameHost = Boolean(origin && new URL(origin).host === req.headers.host); } catch {}
+  const ok = !origin || allowedOrigins.includes(origin) || sameHost;
   callback(null, { origin: ok ? origin : false });
 }));
 app.use(express.json({ limit: '1mb' }));
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'sentinel-siem', events: events.length }));
+app.get('/health', (_req, res) => { pruneExpiredEvents(); res.json({ status: 'ok', service: 'sentinel-siem', events: events.length, alerts: alerts.length }); });
 app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false }), (req, res) => {
   const valid = req.body?.username === adminUser && bcrypt.compareSync(req.body?.password || '', adminPasswordHash);
   if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
@@ -89,17 +120,18 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, sta
 app.get('/api/auth/me', auth, (req, res) => res.json({ user: req.user }));
 function ingest(req, res) {
   if (!sameSecret(req.headers['x-api-key'], ingestKey)) return res.status(401).json({ error: 'Invalid API key' });
-  try { const event = normalize(req.body); events.push(event); persist(); broadcast({ type: 'event', event }); return res.status(201).json({ event }); }
+  try { const event = normalize(req.body); events.push(event); evaluateRules(event); persist(); broadcast({ type: 'event', event }); return res.status(201).json({ event }); }
   catch (error) { return res.status(400).json({ error: error.message }); }
 }
 app.post('/api/ingest/event', ingest);
 app.post('/api/ingest/bulk', (req, res) => {
   if (!sameSecret(req.headers['x-api-key'], ingestKey)) return res.status(401).json({ error: 'Invalid API key' });
   if (!Array.isArray(req.body) || req.body.length > 1000) return res.status(400).json({ error: 'Payload must be an array of up to 1000 events' });
-  try { const added = req.body.map(normalize); events.push(...added); persist(); added.forEach(event => broadcast({ type: 'event', event })); return res.status(201).json({ count: added.length }); }
+  try { const added = req.body.map(normalize); events.push(...added); added.forEach(evaluateRules); persist(); added.forEach(event => broadcast({ type: 'event', event })); return res.status(201).json({ count: added.length }); }
   catch (error) { return res.status(400).json({ error: error.message }); }
 });
 app.get('/api/events', auth, (req, res) => {
+  pruneExpiredEvents();
   const { severity, category, search, limit = 100, offset = 0 } = req.query;
   let result = [...events].reverse();
   if (severity) result = result.filter(e => e.severity === String(severity).toUpperCase());
@@ -108,15 +140,22 @@ app.get('/api/events', auth, (req, res) => {
   const start = Math.max(0, Number(offset) || 0); const size = Math.min(Math.max(1, Number(limit) || 100), 1000);
   res.json({ events: result.slice(start, start + size), total: result.length });
 });
+app.get('/api/alerts', auth, (req, res) => res.json({ alerts: alerts.filter(a => !req.query.status || a.status === req.query.status) }));
+app.patch('/api/alerts/:id', auth, requireRole('admin'), (req, res) => {
+  const alert = alerts.find(a => a.id === req.params.id);
+  if (!alert) return res.status(404).json({ error: 'Alert not found' });
+  if (req.body.status && !['NEW', 'ACKNOWLEDGED', 'RESOLVED', 'CLOSED'].includes(req.body.status)) return res.status(400).json({ error: 'Invalid status' });
+  if (req.body.status) alert.status = req.body.status;
+  persistAlerts();
+  res.json({ alert });
+});
 app.get('/api/stats/summary', auth, (_req, res) => res.json({ totalEvents: events.length, openAlerts: alerts.filter(a => a.status === 'NEW').length, criticalEvents: events.filter(e => e.severity === 'CRITICAL').length }));
-
-// API 404 handler (before static files)
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not Found' }));
-
 app.use(express.static(path.join(__dirname, '..', 'frontend', 'dist')));
 app.get('*', (_req, res) => res.sendFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html')));
 app.use((error, _req, res, _next) => res.status(error instanceof SyntaxError ? 400 : 500).json({ error: error instanceof SyntaxError ? 'Invalid JSON body' : 'Internal server error' }));
 
+setInterval(pruneExpiredEvents, 60 * 60 * 1000).unref();
 const server = app.listen(PORT, () => console.log(`Sentinel SIEM listening on port ${PORT}`));
 const wss = new WebSocketServer({ noServer: true });
 server.on('upgrade', (request, socket, head) => {
