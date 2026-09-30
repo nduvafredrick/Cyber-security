@@ -84,10 +84,20 @@ function sqliteMigrationV2(db){
   }
 }
 
+function sqliteMigrationV3(db){
+  db.exec([
+    "ALTER TABLE organizations ADD COLUMN industry TEXT NOT NULL DEFAULT 'Other'",
+    "ALTER TABLE organizations ADD COLUMN company_size TEXT NOT NULL DEFAULT 'Unknown'",
+    "ALTER TABLE users ADD COLUMN email TEXT",
+    "ALTER TABLE ingest_keys ADD COLUMN environment TEXT NOT NULL DEFAULT 'Production'",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email) WHERE email IS NOT NULL"
+  ].join(';\\n'));
+}
+
 function runSqliteMigrations(db){
   db.exec('CREATE TABLE IF NOT EXISTS _schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)');
   const applied=new Set(db.prepare('SELECT version FROM _schema_migrations').all().map(row=>row.version));
-  const migrations=[[1,sqliteMigrationV1],[2,sqliteMigrationV2]];
+  const migrations=[[1,sqliteMigrationV1],[2,sqliteMigrationV2],[3,sqliteMigrationV3]];
   for(const [version,migration] of migrations){
     if(applied.has(version))continue;
     migration(db);
@@ -139,10 +149,24 @@ async function postgresMigrationV2(q){
   ].join(';\n'));
 }
 
+async function postgresMigrationV3(q){
+  await q("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry TEXT DEFAULT 'Other'");
+  await q("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS company_size TEXT DEFAULT 'Unknown'");
+  await q("UPDATE organizations SET industry='Other' WHERE industry IS NULL");
+  await q("UPDATE organizations SET company_size='Unknown' WHERE company_size IS NULL");
+  await q("ALTER TABLE organizations ALTER COLUMN industry SET NOT NULL");
+  await q("ALTER TABLE organizations ALTER COLUMN company_size SET NOT NULL");
+  await q("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT");
+  await q("ALTER TABLE ingest_keys ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT 'Production'");
+  await q("UPDATE ingest_keys SET environment='Production' WHERE environment IS NULL");
+  await q("ALTER TABLE ingest_keys ALTER COLUMN environment SET NOT NULL");
+  await q("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email) WHERE email IS NOT NULL");
+}
+
 async function runPostgresMigrations(q){
   await q('CREATE TABLE IF NOT EXISTS _schema_migrations(version INTEGER PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL)');
   const applied=new Set((await q('SELECT version FROM _schema_migrations')).map(row=>Number(row.version)));
-  const migrations=[[1,postgresMigrationV1],[2,postgresMigrationV2]];
+  const migrations=[[1,postgresMigrationV1],[2,postgresMigrationV2],[3,postgresMigrationV3]];
   for(const [version,migration] of migrations){
     if(applied.has(version))continue;
     await migration(q);
