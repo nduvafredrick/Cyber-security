@@ -91,7 +91,8 @@ function sqliteMigrationV3(db){
     "ALTER TABLE users ADD COLUMN email TEXT",
     "ALTER TABLE ingest_keys ADD COLUMN environment TEXT NOT NULL DEFAULT 'Production'",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email) WHERE email IS NOT NULL"
-  ].join(';\\n'));
+  ].join(';
+'));
 }
 
 function runSqliteMigrations(db){
