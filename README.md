@@ -6,7 +6,7 @@ Sentinel is a compact Security Information & Event Management (SIEM) platform fo
 
 - React + Vite
 - Node.js + Express
-- SQLite (`better-sqlite3`) with indexed event storage
+- SQLite (`better-sqlite3`) for local development/tests, with PostgreSQL support for hosted production
 - bcrypt + JWT-backed **HttpOnly cookie sessions** with persistent users/roles
 - Authenticated WebSocket live telemetry
 - Docker / Docker Compose
@@ -31,7 +31,8 @@ frontend/                 React SOC console
 backend/server.js         HTTP/WebSocket entry point
 backend/config.js         Runtime configuration + production validation
 backend/security.js       Cookie/JWT authentication + API-key middleware
-backend/storage.js        SQLite persistence, indexes and legacy migration
+backend/storage.js        Storage selection boundary
+backend/storage-pg.js     PostgreSQL persistence for hosted production
 backend/detection.js      Rule-driven detection engine
 backend/logger.js         Structured JSON logging
 backend/test/             Automated backend tests
@@ -39,7 +40,7 @@ Dockerfile                Production container
 docker-compose.yml        Hardened deployment configuration
 ```
 
-SQLite is the current persistence layer. The storage boundary keeps database concerns isolated so PostgreSQL or another event store can be introduced later if deployment scale requires it.
+SQLite remains the local development/test database. When `DATABASE_URL` is set, Sentinel uses PostgreSQL instead; this is the hosted production path because free web hosts have ephemeral local filesystems.
 
 ## Run locally
 
@@ -71,6 +72,7 @@ Required in production:
 - `JWT_SECRET` — at least 32 characters
 - `INGEST_API_KEY` — at least 20 characters
 - `METRICS_API_KEY` — at least 20 characters; required for production `/metrics` access via `X-Metrics-Key`
+- `DATABASE_URL` — required in production; PostgreSQL connection string, preferably with TLS
 - `ADMIN_PASSWORD_HASH` — bcrypt hash
 
 Optional:
@@ -185,20 +187,26 @@ The production container runs non-root, drops Linux capabilities, enables `no-ne
 
 Put Sentinel behind HTTPS/reverse-proxy infrastructure for production use. A Caddy example is provided at `deploy/Caddyfile.example`; Caddy can terminate TLS and proxy both HTTP and WebSocket traffic to Sentinel.
 
-## Deploy to Render
+## Free deployment
 
-Sentinel can be deployed as a single Docker web service on Render using the repository's `render.yaml` Blueprint. The service includes a persistent disk mounted at `/app/backend/data`, so the SQLite database survives container restarts and deployments.
+Sentinel's free deployment path uses a free Render web service plus an external PostgreSQL database. The application does **not** use a Render persistent disk and does not depend on SQLite for hosted data.
 
-1. In Render, create a new **Blueprint** from this repository.
-2. Render reads `render.yaml` and creates the Sentinel web service and persistent disk.
-3. Set the required `ADMIN_PASSWORD_HASH` secret when Render prompts for it. Generate it locally with the bcrypt command shown above.
-4. Deploy the Blueprint and wait for the `/ready` health check to pass.
-5. Open the generated HTTPS service URL. HTTPS is required because production sessions use Secure cookies and HSTS.
-6. Use the generated ingest/metrics secrets from Render for your connectors and monitoring system.
+Render's free web services have an ephemeral filesystem, so SQLite data would be lost on restarts/redeploys. PostgreSQL keeps the application data outside the web service filesystem.
 
-The deployment serves the built React console and the Express/WebSocket backend from the same origin, so no separate frontend hosting or CORS configuration is required for the console.
+1. Create a free PostgreSQL database with a provider that offers a persistent free tier, such as Neon.
+2. Copy its PostgreSQL connection string.
+3. In Render, create a **Blueprint** from this repository. The repository's `render.yaml` uses the `free` web-service plan.
+4. Set `DATABASE_URL` to the PostgreSQL connection string when prompted.
+5. Set `ADMIN_PASSWORD_HASH` to a bcrypt hash.
+6. Render generates `JWT_SECRET`, `INGEST_API_KEY`, and `METRICS_API_KEY`.
+7. Deploy and wait for `/ready` to report the database as ready.
+8. Open the generated HTTPS URL.
 
-For production data protection, configure backups outside the Render persistent disk as well; a backup stored on the same disk does not protect against disk loss. Render deployment does not replace an off-site backup strategy.
+The free web service can spin down after inactivity, so the first request after an idle period can take longer. This is a free-tier limitation, not an application failure.
+
+Hosted production requires PostgreSQL. Local development and the existing SQLite test suite continue to use SQLite when `DATABASE_URL` is not configured.
+
+For database durability, use the PostgreSQL provider's own backup/export facilities. The old SQLite backup scripts remain for local SQLite development and are not the hosted PostgreSQL backup mechanism.
 
 ## CI
 
