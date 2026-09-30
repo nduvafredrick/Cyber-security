@@ -22,6 +22,7 @@ const config={
   retentionDays:Math.max(1,Number(process.env.LOG_RETENTION_DAYS||90)),
   sessionCookieSecure:process.env.SESSION_COOKIE_SECURE==null?env==='production':process.env.SESSION_COOKIE_SECURE==='true',
   upgradeInsecureRequests:process.env.CSP_UPGRADE_INSECURE_REQUESTS==null?env==='production':process.env.CSP_UPGRADE_INSECURE_REQUESTS==='true',
+  hsts:process.env.HSTS==null?env==='production':process.env.HSTS==='true',
   instanceId:crypto.randomBytes(4).toString('hex')
 };
 
