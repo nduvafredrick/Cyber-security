@@ -12,6 +12,7 @@ function freshEnv(dir){
   process.env.INGEST_API_KEY='test-ingest-key';
   process.env.ADMIN_USER='admin';
   process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
+  delete process.env.DATABASE_URL;
   for(const key of ['../config','../storage','../security']){try{delete require.cache[require.resolve(key)]}catch{}}
 }
 function makeStore(){
@@ -58,6 +59,7 @@ test('production environment validation rejects weak secrets',()=>{
   process.env.INGEST_API_KEY='short';
   process.env.METRICS_API_KEY='valid-metrics-key-0123456789';
   process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
+  process.env.DATABASE_URL='postgresql://validation@example.invalid/db';
   delete require.cache[require.resolve('../config')];
   assert.throws(()=>require('../config'),/at least 32 characters/);
   process.env.NODE_ENV='test';
@@ -70,6 +72,7 @@ test('production environment validation rejects missing or weak metrics key',()=
   process.env.JWT_SECRET='this-is-a-valid-jwt-secret-0123456789';
   process.env.INGEST_API_KEY='valid-ingest-key-0123456789';
   process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
+  process.env.DATABASE_URL='postgresql://validation@example.invalid/db';
   delete process.env.METRICS_API_KEY;
   delete require.cache[require.resolve('../config')];
   assert.throws(()=>require('../config'),/Missing required environment variable: METRICS_API_KEY/);
