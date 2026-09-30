@@ -24,7 +24,7 @@ function Badge({children}){return <span className={'badge '+String(children).toL
 function eventMatches(e,severity,search){const q=String(search||'').trim().toLowerCase();return(!severity||e.severity===severity)&&(!q||[e.message,e.category,e.source_ip,e.hostname].some(v=>String(v).toLowerCase().includes(q)))}
 
 function App(){
- const[token,setToken]=useState(true),[currentUser,setCurrentUser]=useState(null),[events,setEvents]=useState([]),[alerts,setAlerts]=useState([]),[stats,setStats]=useState({}),[view,setView]=useState('overview'),[searchInput,setSearchInput]=useState(''),[query,setQuery]=useState(''),[severity,setSeverity]=useState(''),[page,setPage]=useState(0),[loading,setLoading]=useState(false),[error,setError]=useState(''),[login,setLogin]=useState({username:'',password:''}),[connected,setConnected]=useState(false);
+ const[token,setToken]=useState(false),[currentUser,setCurrentUser]=useState(null),[events,setEvents]=useState([]),[alerts,setAlerts]=useState([]),[stats,setStats]=useState({}),[view,setView]=useState('overview'),[searchInput,setSearchInput]=useState(''),[query,setQuery]=useState(''),[severity,setSeverity]=useState(''),[page,setPage]=useState(0),[loading,setLoading]=useState(false),[error,setError]=useState(''),[login,setLogin]=useState({username:'',password:''}),[connected,setConnected]=useState(false);
  const ws=useRef(null),abort=useRef(null),filterRef=useRef({severity:'',search:''});
 
  useEffect(()=>{filterRef.current={severity,search:query}},[severity,query]);
