@@ -53,3 +53,14 @@ test('bulk ingestion has a separate per-client limit',async()=>{
   assert.match(limited.headers.get('retry-after')||'',/^\\d+$/);
   assert.equal((await limited.json()).error,'Bulk ingestion rate limit exceeded');
 });
+
+test('failed authentication does not consume a valid client quota',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const body=JSON.stringify({severity:'INFO',category:'system',source_ip:'10.9.9.3',message:'auth-first-test'});
+  for(let i=0;i<5;i++){
+    const bad=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':'wrong-key-'+i},body});
+    assert.equal(bad.status,401);
+  }
+  const fresh=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':'rate-limit-auth-test-key'},body});
+  assert.equal(fresh.status,201);
+});
