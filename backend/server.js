@@ -11,6 +11,7 @@ const store=require('./storage');
 const security=require('./security');
 const detection=require('./detection');
 const logger=require('./logger');
+const bcrypt=require('bcryptjs');
 
 const app=express();
 app.disable('x-powered-by');
@@ -47,7 +48,7 @@ function broadcast(payload,filterable=false){
 function processEvent(e){
   store.addEvents([e]);
   const recent=store.getRecentEvents(e.source_ip,new Date(Date.now()-300000).toISOString());
-  const alert=detection.evaluate(e,recent);
+  const alert=detection.evaluate(e,recent,store.getRules());
   let createdAlert=null;
   if(alert && !store.getActiveAlert(alert.rule_key,alert.source_ip)){
     store.addAlert(alert);
@@ -71,6 +72,50 @@ app.post('/api/auth/login',rateLimit({windowMs:900000,limit:10,standardHeaders:t
 });
 app.post('/api/auth/logout',security.auth,(req,res)=>{security.clearSession(res);store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'LOGOUT',actor:req.user.username});res.status(204).end()});
 app.get('/api/auth/me',security.auth,(req,res)=>res.json({user:req.user}));
+app.get('/api/admin/users',security.auth,security.requireRole('admin'),(_req,res)=>res.json({users:store.listUsers()}));
+app.post('/api/admin/users',security.auth,security.requireRole('admin'),(req,res)=>{
+  try{
+    const username=String(req.body?.username||'').trim(),password=String(req.body?.password||''),role=req.body?.role==='admin'?'admin':'analyst';
+    if(!/^[a-zA-Z0-9._-]{3,50}$/.test(username))throw Error('Invalid username');
+    if(password.length<12)throw Error('Password must be at least 12 characters');
+    const id=store.addUser({username,password_hash:bcrypt.hashSync(password,12),role});
+    store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'USER_CREATED',actor:req.user.username,target:username,status:role});
+    res.status(201).json({user:store.listUsers().find(x=>x.id===id)});
+  }catch(err){res.status(400).json({error:/UNIQUE|constraint/i.test(err.message)?'Username already exists':err.message})}
+});
+app.patch('/api/admin/users/:id',security.auth,security.requireRole('admin'),(req,res)=>{
+  if(Number(req.params.id)===req.user.id&&req.body?.enabled===false)return res.status(400).json({error:'You cannot disable your own account'});
+  const user=store.setUserEnabled(Number(req.params.id),req.body?.enabled!==false);
+  if(!user)return res.status(404).json({error:'User not found'});
+  store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'USER_STATUS_CHANGE',actor:req.user.username,target:user.username,status:user.enabled?'ENABLED':'DISABLED'});
+  res.json({user});
+});
+app.get('/api/admin/ingest-keys',security.auth,security.requireRole('admin'),(_req,res)=>res.json({keys:store.getIngestKeys()}));
+app.post('/api/admin/ingest-keys/rotate',security.auth,security.requireRole('admin'),(req,res)=>{
+  const raw=security.generateIngestKey(),key={id:crypto.randomUUID(),name:String(req.body?.name||'rotated-key').slice(0,80),raw,hash:crypto.createHash('sha256').update(raw).digest('hex'),created_by:req.user.username};
+  const record=store.createIngestKey(key);
+  store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'INGEST_KEY_CREATED',actor:req.user.username,target:record.id,status:'ACTIVE'});
+  res.status(201).json({key:raw,record});
+});
+app.delete('/api/admin/ingest-keys/:id',security.auth,security.requireRole('admin'),(req,res)=>{
+  const key=store.revokeIngestKey(req.params.id,req.user.username);
+  if(!key)return res.status(404).json({error:'Key not found'});
+  store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'INGEST_KEY_REVOKED',actor:req.user.username,target:key.id,status:'REVOKED'});
+  res.json({key});
+});
+app.get('/api/admin/detection-rules',security.auth,security.requireRole('admin'),(_req,res)=>res.json({rules:store.listRules()}));
+app.put('/api/admin/detection-rules/:ruleKey',security.auth,security.requireRole('admin'),(req,res)=>{
+  try{
+    const body=req.body||{},rule={rule_key:String(req.params.ruleKey).trim(),name:String(body.name||'').slice(0,100),description:String(body.description||'').slice(0,500),enabled:body.enabled!==false,window_ms:Number(body.window_ms),threshold:Number(body.threshold),severities:Array.isArray(body.severities)?body.severities:[],categories:Array.isArray(body.categories)?body.categories.map(String):[],message_pattern:String(body.message_pattern||''),alert_severity:String(body.alert_severity||'HIGH').toUpperCase(),title:String(body.title||'Detection rule').slice(0,150)};
+    if(!rule.rule_key||!rule.name||rule.window_ms<1000||rule.window_ms>86400000||!Number.isInteger(rule.threshold)||rule.threshold<1||rule.threshold>10000)throw Error('Invalid rule configuration');
+    if(!['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(rule.alert_severity))throw Error('Invalid alert severity');
+    if(!rule.severities.every(x=>['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(x)))throw Error('Invalid event severity');
+    new RegExp(rule.message_pattern.replace(/^\/(.*)\/([a-z]*)$/,'$1'));
+    const saved=store.upsertRule(rule,req.user.username);
+    store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'DETECTION_RULE_UPDATED',actor:req.user.username,target:rule.rule_key,status:rule.enabled?'ENABLED':'DISABLED'});
+    res.json({rule:{...saved,enabled:Boolean(saved.enabled),severities:JSON.parse(saved.severities),categories:JSON.parse(saved.categories)}});
+  }catch(err){res.status(400).json({error:err.message})}
+});
 
 app.post('/api/ingest/event',security.apiKey,(req,res)=>{
   try{const e=normalize(req.body);const alert=processEvent(e);res.status(201).json({event:e,alert})}
@@ -84,7 +129,7 @@ app.post('/api/ingest/bulk',security.apiKey,(req,res)=>{
     store.addEvents(items);
     for(const e of items){
       const recent=store.getRecentEvents(e.source_ip,new Date(Date.now()-300000).toISOString());
-      const a=detection.evaluate(e,recent);
+      const a=detection.evaluate(e,recent,store.getRules());
       if(a && !store.getActiveAlert(a.rule_key,a.source_ip)){store.addAlert(a);alerts.push(a);broadcast({type:'alert',alert:a})}
       broadcast({type:'event',event:e},true);
     }
@@ -115,7 +160,7 @@ app.patch('/api/alerts/:id',security.auth,(req,res)=>{
 app.get('/api/stats/summary',security.auth,(_q,res)=>res.json(store.getStats()));
 app.get('/api/audit',security.auth,(_q,res)=>res.json({audit:store.getAudit()}));
 app.use('/api',(_q,r)=>r.status(404).json({error:'Not Found'}));
-app.use(express.static(path.join(__dirname,'..','frontend','dist'),{maxAge:'1h',immutable:true}));
+app.use(express.static(path.join(__dirname,'..','frontend','dist'),{setHeaders:(res,file)=>{if(file.endsWith('index.html'))res.setHeader('Cache-Control','no-store');else res.setHeader('Cache-Control','public,max-age=31536000,immutable')}}));
 app.get('*',(_q,r)=>r.sendFile(path.join(__dirname,'..','frontend','dist','index.html')));
 
 const wss=new WebSocketServer({noServer:true});
