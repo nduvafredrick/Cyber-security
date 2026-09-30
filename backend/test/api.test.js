@@ -24,11 +24,13 @@ test.after(async()=>{if(server)await new Promise(resolve=>server.close(resolve))
 
 test('metrics expose operational counters',async()=>{
   const base='http://127.0.0.1:'+server.address().port;
+  const health=await fetch(base+'/health');
+  assert.equal(health.status,200);
   const response=await fetch(base+'/metrics');
   assert.equal(response.status,200);
   const body=await response.text();
-  assert.match(body,/sentinel_http_requests_total \\d+/);
-  assert.match(body,/sentinel_events_ingested_total \\d+/);
+  assert.match(body,/sentinel_http_requests_total \d+/);
+  assert.match(body,/sentinel_events_ingested_total \d+/);
 });
 
 test('responses include a unique request id',async()=>{
