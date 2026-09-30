@@ -22,6 +22,23 @@ test.before(async()=>{
 });
 test.after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));});
 
+test('responses include a unique request id',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const response=await fetch(base+'/health');
+  assert.equal(response.status,200);
+  assert.match(response.headers.get('x-request-id')||'',/^[0-9a-f-]{36}$/);
+});
+
+test('same-origin requests work while foreign origins are rejected',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const same=await fetch(base+'/health',{headers:{Origin:base}});
+  assert.equal(same.status,200);
+  assert.equal(same.headers.get('access-control-allow-origin'),base);
+  const foreign=await fetch(base+'/health',{headers:{Origin:'https://evil.example'}});
+  assert.equal(foreign.status,403);
+  assert.equal((await foreign.json()).error,'Origin not allowed');
+});
+
 test('login returns a session cookie and authenticated API access works',async()=>{
   const base='http://127.0.0.1:'+server.address().port;
   const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
