@@ -20,7 +20,7 @@ function sqliteMigrationV1(db){
     'CREATE TABLE IF NOT EXISTS detection_rules (rule_key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, window_ms INTEGER NOT NULL, threshold INTEGER NOT NULL, severities TEXT NOT NULL, categories TEXT NOT NULL, message_pattern TEXT NOT NULL, alert_severity TEXT NOT NULL, title TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL)',
     'CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, target TEXT, status TEXT)',
     'CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp DESC)'
-  ].join('\n'));
+  ].join(';\n'));
 }
 
 function sqliteMigrationV2(db){
@@ -76,7 +76,7 @@ function sqliteMigrationV2(db){
         'CREATE INDEX idx_rules_org_enabled ON detection_rules(organization_id,enabled)',
         'CREATE INDEX idx_audit_timestamp ON audit(timestamp DESC)',
         'CREATE INDEX idx_audit_org_timestamp ON audit(organization_id,timestamp DESC)'
-      ].join('\n'));
+      ].join(';\n'));
     });
     migrate();
   }finally{
@@ -109,7 +109,7 @@ async function postgresMigrationV1(q){
     'CREATE TABLE IF NOT EXISTS detection_rules(rule_key TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT TRUE,window_ms BIGINT NOT NULL,threshold INTEGER NOT NULL,severities JSONB NOT NULL,categories JSONB NOT NULL,message_pattern TEXT NOT NULL,alert_severity TEXT NOT NULL,title TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL,updated_by TEXT NOT NULL)',
     'CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,timestamp TIMESTAMPTZ NOT NULL,action TEXT NOT NULL,actor TEXT NOT NULL,target TEXT,status TEXT)',
     'CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp DESC)'
-  ].join('\n'));
+  ].join(';\n'));
 }
 
 async function postgresMigrationV2(q){
@@ -135,7 +135,7 @@ async function postgresMigrationV2(q){
     'CREATE INDEX IF NOT EXISTS idx_ingest_keys_org_created ON ingest_keys(organization_id,created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_rules_org_enabled ON detection_rules(organization_id,enabled)',
     'CREATE INDEX IF NOT EXISTS idx_audit_org_timestamp ON audit(organization_id,timestamp DESC)'
-  ].join('\n'));
+  ].join(';\n'));
 }
 
 async function runPostgresMigrations(q){
