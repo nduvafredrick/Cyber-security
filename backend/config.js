@@ -20,6 +20,7 @@ const config={
   adminPasswordHash:process.env.ADMIN_PASSWORD_HASH||null,
   corsOrigins:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()).filter(Boolean),
   retentionDays:Math.max(1,Number(process.env.LOG_RETENTION_DAYS||90)),
+  sessionCookieSecure:process.env.SESSION_COOKIE_SECURE==null?env==='production':process.env.SESSION_COOKIE_SECURE==='true',
   instanceId:crypto.randomBytes(4).toString('hex')
 };
 
