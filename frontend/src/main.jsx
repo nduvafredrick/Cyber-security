@@ -1,122 +1,16 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { createRoot } from 'react-dom/client';
-import './style.css';
-
-function App() {
-  const [token, setToken] = useState(localStorage.getItem('token'));
-  const [events, setEvents] = useState([]);
-  const [form, setForm] = useState({ username: '', password: '' });
-  const [error, setError] = useState('');
-  const wsRef = useRef(null);
-  const reconnectRef = useRef(null);
-  const maxEventsRef = useRef(500);
-
-  async function login(e) {
-    e.preventDefault();
-    setError('');
-    const r = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form)
-    });
-    const data = await r.json();
-    if (!r.ok) return setError(data.error || 'Login failed');
-    localStorage.setItem('token', data.token);
-    setToken(data.token);
-  }
-
-  function connectWebSocket(token) {
-    if (!token) return;
-    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${protocol}://${location.host}/ws?token=${encodeURIComponent(token)}`);
-    ws.onopen = () => {
-      clearTimeout(reconnectRef.current);
-      console.log('WebSocket connected');
-    };
-    ws.onmessage = (msg) => {
-      try {
-        const data = JSON.parse(msg.data);
-        if (data.type === 'event') {
-          setEvents(current => [data.event, ...current].slice(0, maxEventsRef.current));
-        }
-      } catch (e) {
-        console.error('WS parse error:', e);
-      }
-    };
-    ws.onerror = () => console.error('WebSocket error');
-    ws.onclose = () => {
-      console.log('WebSocket closed, reconnecting in 3s...');
-      reconnectRef.current = setTimeout(() => connectWebSocket(token), 3000);
-    };
-    wsRef.current = ws;
-  }
-
-  useEffect(() => {
-    if (!token) return;
-    // Load initial events
-    fetch('/api/events', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => {
-        if (r.status === 401) { localStorage.removeItem('token'); setToken(null); return; }
-        return r.json();
-      })
-      .then(d => { if (d && d.events) setEvents(d.events.slice(0, maxEventsRef.current)); })
-      .catch(e => console.error('Failed to load events:', e));
-    // Connect WebSocket
-    connectWebSocket(token);
-    return () => { if (wsRef.current) wsRef.current.close(); if (reconnectRef.current) clearTimeout(reconnectRef.current); };
-  }, [token]);
-
-  if (!token) {
-    return (
-      <main className="login">
-        <form onSubmit={login}>
-          <h1>🛡️ Sentinel SIEM</h1>
-          <input value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Username" required/>
-          <input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="Password" required/>
-          <button>Sign in</button>
-          {error && <p className="error">{error}</p>}
-        </form>
-      </main>
-    );
-  }
-
-  return (
-    <main>
-      <header>
-        <h1>🛡️ Sentinel SIEM</h1>
-        <button onClick={() => { localStorage.removeItem('token'); setToken(null); }}>Sign out</button>
-      </header>
-      <section className="card">
-        <h2>Events <span>{events.length}</span></h2>
-        {events.length === 0 ? (
-          <p>No events yet. Send events to /api/ingest/event or /api/ingest/bulk.</p>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Severity</th>
-                <th>Category</th>
-                <th>Source</th>
-                <th>Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map(e => (
-                <tr key={e.id}>
-                  <td>{new Date(e.timestamp).toLocaleString()}</td>
-                  <td><b className={e.severity.toLowerCase()}>{e.severity}</b></td>
-                  <td>{e.category}</td>
-                  <td>{e.source_ip}</td>
-                  <td>{e.message}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-    </main>
-  );
-}
-
-createRoot(document.getElementById('root')).render(<App />);
+import React,{useEffect,useMemo,useRef,useState}from'react';import{createRoot}from'react-dom/client';import'./style.css';
+const api=async(path,opts={})=>{const r=await fetch(path,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Request failed');return d};
+function Badge({children}){return <span className={'badge '+String(children).toLowerCase()}>{children}</span>}
+function App(){const[token,setToken]=useState(localStorage.getItem('token')),[events,setEvents]=useState([]),[alerts,setAlerts]=useState([]),[stats,setStats]=useState({}),[view,setView]=useState('overview'),[search,setSearch]=useState(''),[severity,setSeverity]=useState(''),[login,setLogin]=useState({username:'',password:''}),[error,setError]=useState(''),ws=useRef();
+const auth={Authorization:`Bearer ${token}`};
+async function load(){const [e,a,s]=await Promise.all([api('/api/events?limit=100',{headers:auth}),api('/api/alerts',{headers:auth}),api('/api/stats/summary',{headers:auth})]);setEvents(e.events);setAlerts(a.alerts);setStats(s)}
+useEffect(()=>{if(!token)return;let active=true;load().catch(e=>{if(!active)return;localStorage.removeItem('token');setToken(null);setError(e.message)});const protocol=location.protocol==='https:'?'wss':'ws';const socket=new WebSocket(`${protocol}://${location.host}/ws?token=${encodeURIComponent(token)}`);ws.current=socket;socket.onmessage=e=>{if(!active)return;try{const d=JSON.parse(e.data);if(d.type==='event'){setEvents(x=>[d.event,...x].slice(0,100));setStats(s=>({...s,totalEvents:(s.totalEvents||0)+1}))}if(d.type==='alert'){setAlerts(x=>[d.alert,...x]);setStats(s=>({...s,openAlerts:(s.openAlerts||0)+1}))}if(d.type==='alert.updated')setAlerts(x=>x.map(a=>a.id===d.alert.id?d.alert:a))}catch{}};socket.onclose=()=>{if(active)ws.current=null};return()=>{active=false;socket.close();ws.current=null}},[token]);
+const filtered=useMemo(()=>events.filter(e=>(!severity||e.severity===severity)&&(!search||JSON.stringify(e).toLowerCase().includes(search.toLowerCase()))),[events,severity,search]);
+async function signIn(e){e.preventDefault();try{const d=await api('/api/auth/login',{method:'POST',body:JSON.stringify(login)});localStorage.setItem('token',d.token);setToken(d.token);setError('')}catch(e){setError(e.message)}}
+async function alertStatus(id,status){const d=await api('/api/alerts/'+id,{method:'PATCH',headers:auth,body:JSON.stringify({status})});setAlerts(x=>x.map(a=>a.id===id?d.alert:a))}
+if(!token)return <main className="auth"><form onSubmit={signIn} className="login"><div className="brand-mark">S</div><div><p className="eyebrow">SECURITY OPERATIONS</p><h1>Sentinel</h1><p className="muted">Security Information & Event Management</p></div><input placeholder="Username" value={login.username} onChange={e=>setLogin({...login,username:e.target.value})}/><input type="password" placeholder="Password" value={login.password} onChange={e=>setLogin({...login,password:e.target.value})}/><button>Sign in to console</button>{error&&<p className="error">{error}</p>}</form></main>;
+return <div className="shell"><aside><div className="logo"><span>S</span><div><strong>Sentinel</strong><small>SIEM CONSOLE</small></div></div><nav>{[['overview','Overview'],['events','Events'],['alerts','Alerts'],['audit','Audit Log']].map(([id,label])=><button className={view===id?'active':''} onClick={()=>setView(id)} key={id}><i>{id==='overview'?'◈':id==='events'?'≡':id==='alerts'?'△':'⌁'}</i>{label}{id==='alerts'&&stats.openAlerts?<em>{stats.openAlerts}</em>:null}</button>)}</nav><div className="sidebar-foot"><span className="status-dot"/>System operational<button className="signout" onClick={()=>{localStorage.removeItem('token');setToken(null)}}>Sign out</button></div></aside><main className="content"><header><div><p className="eyebrow">SECURITY OPERATIONS CENTER</p><h1>{view==='overview'?'Overview':view==='events'?'Security Events':view==='alerts'?'Alert Queue':'Audit Log'}</h1></div><div className="live"><span className="status-dot"/>LIVE</div></header>{view==='overview'&&<><section className="metrics">{[['TOTAL EVENTS',stats.totalEvents||0,'events'],['OPEN ALERTS',stats.openAlerts||0,'alerts'],['CRITICAL',stats.criticalEvents||0,'critical'],['SOURCES',stats.sources||0,'sources']].map(x=><article className="metric" key={x[0]}><span>{x[0]}</span><strong>{x[1]}</strong><small>{x[2]==='alerts'?'requires attention':x[2]==='critical'?'critical severity':'monitored'}</small></article>)}</section><div className="grid"><section className="panel"><div className="panel-head"><div><h2>Live event stream</h2><p>Most recent security telemetry</p></div><button className="ghost" onClick={load}>Refresh</button></div><EventTable rows={events.slice(0,12)}/></section><section className="panel"><div className="panel-head"><div><h2>Active alerts</h2><p>Detection engine findings</p></div></div>{alerts.filter(a=>a.status==='NEW').slice(0,5).map(a=><AlertRow a={a} key={a.id} onStatus={alertStatus}/>)}{!alerts.some(a=>a.status==='NEW')&&<Empty text="No active alerts"/>}</section></div></>}{view==='events'&&<section className="panel"><div className="toolbar"><input placeholder="Search events..." value={search} onChange={e=>setSearch(e.target.value)}/><select value={severity} onChange={e=>setSeverity(e.target.value)}><option value="">All severities</option>{['CRITICAL','HIGH','MEDIUM','LOW','INFO'].map(x=><option key={x}>{x}</option>)}</select></div><EventTable rows={filtered}/></section>}{view==='alerts'&&<section className="panel"><div className="panel-head"><div><h2>Alert queue</h2><p>Investigate and update detections</p></div></div>{alerts.map(a=><AlertRow a={a} key={a.id} onStatus={alertStatus}/>)}</section>}{view==='audit'&&<section className="panel"><div className="panel-head"><div><h2>Audit trail</h2><p>Administrative activity</p></div></div><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Target</th></tr></thead><tbody><Audit/></tbody></table></section>}</main></div>}
+function EventTable({rows}){return <div className="table-wrap"><table><thead><tr><th>Time</th><th>Severity</th><th>Category</th><th>Source</th><th>Message</th></tr></thead><tbody>{rows.map(e=><tr key={e.id}><td className="time">{new Date(e.timestamp).toLocaleTimeString()}</td><td><Badge>{e.severity}</Badge></td><td>{e.category}</td><td className="mono">{e.source_ip}</td><td>{e.message}</td></tr>)}</tbody></table>{!rows.length&&<Empty text="No events match the current filters"/>}</div>}
+function AlertRow({a,onStatus}){return <div className="alert"><div><Badge>{a.severity}</Badge><strong>{a.title}</strong><p>{a.description}</p><small>{new Date(a.created_at).toLocaleString()} · {a.source_ip}</small></div><div className="actions">{a.status==='NEW'&&<button onClick={()=>onStatus(a.id,'ACKNOWLEDGED')}>Acknowledge</button>}{a.status==='ACKNOWLEDGED'&&<button onClick={()=>onStatus(a.id,'RESOLVED')}>Resolve</button>}<Badge>{a.status}</Badge></div></div>}
+function Empty({text}){return <div className="empty">{text}</div>}function Audit(){const[a,setA]=useState([]);useEffect(()=>{api('/api/audit',{headers:{Authorization:`Bearer ${localStorage.getItem('token')}`}}).then(d=>setA(d.audit)).catch(()=>setA([]))},[]);return <>{a.map(x=><tr key={x.id}><td>{new Date(x.timestamp).toLocaleString()}</td><td>{x.action}</td><td>{x.actor}</td><td className="mono">{x.target||'—'}</td></tr>)}</>}
+createRoot(document.getElementById('root')).render(<App/>);

@@ -1,167 +1,18 @@
-require('dotenv').config();
-
-const crypto = require('crypto');
-const fs = require('fs');
-const net = require('net');
-const path = require('path');
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const { WebSocketServer } = require('ws');
-
-const app = express();
-app.set('trust proxy', 1);
-const PORT = Number(process.env.PORT || 3001);
-const NODE_ENV = process.env.NODE_ENV || 'development';
-const DATA_DIR = path.join(__dirname, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'events.json');
-const ALERTS_FILE = path.join(DATA_DIR, 'alerts.json');
-const JWT_SECRET = process.env.JWT_SECRET;
-const INGEST_API_KEY = process.env.INGEST_API_KEY;
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3001').split(',').map(o => o.trim()).filter(Boolean);
-const adminUser = process.env.ADMIN_USER || 'admin';
-
-if (NODE_ENV === 'production' && (!JWT_SECRET || JWT_SECRET.includes('replace') || !INGEST_API_KEY || INGEST_API_KEY.includes('replace') || !process.env.ADMIN_PASSWORD_HASH)) {
-  throw new Error('Production requires JWT_SECRET, INGEST_API_KEY, and ADMIN_PASSWORD_HASH');
-}
-const jwtSecret = JWT_SECRET || 'local-development-secret';
-const ingestKey = INGEST_API_KEY || 'local-development-ingest-key';
-const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH || (process.env.ADMIN_PASSWORD ? bcrypt.hashSync(process.env.ADMIN_PASSWORD, 12) : null);
-if (!adminPasswordHash) throw new Error('Set ADMIN_PASSWORD_HASH or ADMIN_PASSWORD in the environment');
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-let events = readJson(DATA_FILE, []);
-let alerts = readJson(ALERTS_FILE, []);
-const clients = new Set();
-let writeQueued = false;
-let alertWriteQueued = false;
-const retentionDays = Math.max(1, Number(process.env.LOG_RETENTION_DAYS || 90));
-
-function readJson(file, fallback) {
-  try { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback; }
-  catch { return fallback; }
-}
-function atomicWrite(file, value) {
-  const temp = `${file}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(value));
-  fs.renameSync(temp, file);
-}
-function persist() {
-  if (writeQueued) return;
-  writeQueued = true;
-  setImmediate(() => { writeQueued = false; atomicWrite(DATA_FILE, events.slice(-10000)); });
-}
-function persistAlerts() {
-  if (alertWriteQueued) return;
-  alertWriteQueued = true;
-  setImmediate(() => { alertWriteQueued = false; atomicWrite(ALERTS_FILE, alerts.slice(-5000)); });
-}
-function pruneExpiredEvents() {
-  const cutoff = Date.now() - retentionDays * 86400000;
-  const before = events.length;
-  events = events.filter(event => Date.parse(event.timestamp) >= cutoff);
-  if (events.length !== before) persist();
-}
-function publicUser(user) { return { id: user.id, username: user.username, role: user.role }; }
-function issueToken(user) { return jwt.sign(publicUser(user), jwtSecret, { expiresIn: '8h' }); }
-function auth(req, res, next) {
-  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  try { req.user = jwt.verify(token, jwtSecret); next(); }
-  catch { res.status(401).json({ error: 'Authentication required' }); }
-}
-function requireRole(role) { return (req, res, next) => req.user?.role === role ? next() : res.status(403).json({ error: 'Forbidden' }); }
-function sameSecret(provided, expected) {
-  const a = Buffer.from(String(provided || ''));
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-function normalize(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Event must be an object');
-  const severity = String(input.severity || 'INFO').toUpperCase();
-  if (!['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'].includes(severity)) throw new Error('Invalid severity');
-  const timestamp = input.timestamp || new Date().toISOString();
-  if (Number.isNaN(Date.parse(timestamp))) throw new Error('Invalid timestamp');
-  const sourceIp = String(input.source_ip || input.sourceIp || 'unknown');
-  if (sourceIp !== 'unknown' && net.isIP(sourceIp) === 0) throw new Error('Invalid source_ip');
-  const text = value => String(value || '').slice(0, 1000);
-  return { id: `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`, timestamp: new Date(timestamp).toISOString(), severity, category: text(input.category || 'general').slice(0, 100), source_ip: sourceIp, message: text(input.message || 'Event received'), hostname: text(input.hostname || 'unknown').slice(0, 255) };
-}
-function broadcast(message) { const value = JSON.stringify(message); for (const ws of clients) if (ws.readyState === 1) ws.send(value); }
-function evaluateRules(event) {
-  if (event.severity !== 'HIGH' && event.severity !== 'CRITICAL') return;
-  if (!/ssh|login|authentication/i.test(`${event.category} ${event.message}`)) return;
-  const windowStart = Date.now() - 5 * 60 * 1000;
-  const count = events.filter(item => item.source_ip === event.source_ip && Date.parse(item.timestamp) >= windowStart && /failed|invalid|denied/i.test(item.message)).length;
-  if (count >= 5 && !alerts.some(a => a.source_ip === event.source_ip && a.status === 'NEW' && Date.now() - Date.parse(a.created_at) < 300000)) {
-    const alert = { id: `alert-${Date.now()}`, created_at: new Date().toISOString(), source_ip: event.source_ip, severity: 'CRITICAL', status: 'NEW', title: 'Possible brute-force authentication attack', count };
-    alerts.push(alert); persistAlerts(); broadcast({ type: 'alert', alert });
-  }
-}
-
-app.use(helmet());
-app.use(cors((req, callback) => {
-  const origin = req.headers.origin;
-  let sameHost = false;
-  try { sameHost = Boolean(origin && new URL(origin).host === req.headers.host); } catch {}
-  const ok = !origin || allowedOrigins.includes(origin) || sameHost;
-  callback(null, { origin: ok ? origin : false });
-}));
-app.use(express.json({ limit: '1mb' }));
-app.get('/health', (_req, res) => { pruneExpiredEvents(); res.json({ status: 'ok', service: 'sentinel-siem', events: events.length, alerts: alerts.length }); });
-app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false }), (req, res) => {
-  const valid = req.body?.username === adminUser && bcrypt.compareSync(req.body?.password || '', adminPasswordHash);
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-  const user = { id: 1, username: adminUser, role: 'admin' };
-  res.json({ token: issueToken(user), user: publicUser(user) });
-});
-app.get('/api/auth/me', auth, (req, res) => res.json({ user: req.user }));
-function ingest(req, res) {
-  if (!sameSecret(req.headers['x-api-key'], ingestKey)) return res.status(401).json({ error: 'Invalid API key' });
-  try { const event = normalize(req.body); events.push(event); evaluateRules(event); persist(); broadcast({ type: 'event', event }); return res.status(201).json({ event }); }
-  catch (error) { return res.status(400).json({ error: error.message }); }
-}
-app.post('/api/ingest/event', ingest);
-app.post('/api/ingest/bulk', (req, res) => {
-  if (!sameSecret(req.headers['x-api-key'], ingestKey)) return res.status(401).json({ error: 'Invalid API key' });
-  if (!Array.isArray(req.body) || req.body.length > 1000) return res.status(400).json({ error: 'Payload must be an array of up to 1000 events' });
-  try { const added = req.body.map(normalize); events.push(...added); added.forEach(evaluateRules); persist(); added.forEach(event => broadcast({ type: 'event', event })); return res.status(201).json({ count: added.length }); }
-  catch (error) { return res.status(400).json({ error: error.message }); }
-});
-app.get('/api/events', auth, (req, res) => {
-  pruneExpiredEvents();
-  const { severity, category, search, limit = 100, offset = 0 } = req.query;
-  let result = [...events].reverse();
-  if (severity) result = result.filter(e => e.severity === String(severity).toUpperCase());
-  if (category) result = result.filter(e => e.category === category);
-  if (search) result = result.filter(e => JSON.stringify(e).toLowerCase().includes(String(search).toLowerCase()));
-  const start = Math.max(0, Number(offset) || 0); const size = Math.min(Math.max(1, Number(limit) || 100), 1000);
-  res.json({ events: result.slice(start, start + size), total: result.length });
-});
-app.get('/api/alerts', auth, (req, res) => res.json({ alerts: alerts.filter(a => !req.query.status || a.status === req.query.status) }));
-app.patch('/api/alerts/:id', auth, requireRole('admin'), (req, res) => {
-  const alert = alerts.find(a => a.id === req.params.id);
-  if (!alert) return res.status(404).json({ error: 'Alert not found' });
-  if (req.body.status && !['NEW', 'ACKNOWLEDGED', 'RESOLVED', 'CLOSED'].includes(req.body.status)) return res.status(400).json({ error: 'Invalid status' });
-  if (req.body.status) alert.status = req.body.status;
-  persistAlerts();
-  res.json({ alert });
-});
-app.get('/api/stats/summary', auth, (_req, res) => res.json({ totalEvents: events.length, openAlerts: alerts.filter(a => a.status === 'NEW').length, criticalEvents: events.filter(e => e.severity === 'CRITICAL').length }));
-app.use('/api', (req, res) => res.status(404).json({ error: 'Not Found' }));
-app.use(express.static(path.join(__dirname, '..', 'frontend', 'dist')));
-app.get('*', (_req, res) => res.sendFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html')));
-app.use((error, _req, res, _next) => res.status(error instanceof SyntaxError ? 400 : 500).json({ error: error instanceof SyntaxError ? 'Invalid JSON body' : 'Internal server error' }));
-
-setInterval(pruneExpiredEvents, 60 * 60 * 1000).unref();
-const server = app.listen(PORT, () => console.log(`Sentinel SIEM listening on port ${PORT}`));
-const wss = new WebSocketServer({ noServer: true });
-server.on('upgrade', (request, socket, head) => {
-  if (!request.url.startsWith('/ws')) return socket.destroy();
-  const token = new URL(request.url, `http://${request.headers.host}`).searchParams.get('token');
-  try { jwt.verify(token || '', jwtSecret); } catch { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); return socket.destroy(); }
-  wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request));
-});
-wss.on('connection', ws => { clients.add(ws); ws.on('close', () => clients.delete(ws)); });
+const express=require('express');const cors=require('cors');const helmet=require('helmet');const rateLimit=require('express-rate-limit');const crypto=require('crypto');const net=require('net');const {WebSocketServer}=require('ws');
+const config=require('./config');const store=require('./storage');const security=require('./security');const detection=require('./detection');
+const app=express();app.disable('x-powered-by');app.use(helmet());app.use(cors({origin:(origin,cb)=>!origin||config.corsOrigins.includes(origin)?cb(null,true):cb(new Error('Origin not allowed'))}));app.use(express.json({limit:'1mb'}));
+function normalize(input){if(!input||typeof input!=='object'||Array.isArray(input))throw Error('Event must be an object');const severity=String(input.severity||'INFO').toUpperCase();if(!['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(severity))throw Error('Invalid severity');const timestamp=input.timestamp||new Date().toISOString();if(Number.isNaN(Date.parse(timestamp)))throw Error('Invalid timestamp');const ip=String(input.source_ip||input.sourceIp||'unknown');if(ip!=='unknown'&&net.isIP(ip)===0)throw Error('Invalid source_ip');const text=(v,n)=>String(v??'').slice(0,n);return{id:Date.now()+'-'+crypto.randomBytes(4).toString('hex'),timestamp:new Date(timestamp).toISOString(),severity,category:text(input.category||'general',100),source_ip:ip,message:text(input.message||'Event received',1000),hostname:text(input.hostname||'unknown',255)}} 
+const clients=new Set();function broadcast(x){const s=JSON.stringify(x);for(const ws of clients)if(ws.readyState===1)ws.send(s)}
+app.get('/health',(_q,r)=>{store.prune();r.json({status:'ok',service:'sentinel-siem',version:'3.0.0',events:store.getEvents().length,alerts:store.getAlerts().filter(a=>a.status==='NEW').length})});
+app.post('/api/auth/login',rateLimit({windowMs:900000,limit:10,standardHeaders:true,legacyHeaders:false}), (req,res)=>{const user=security.login(req.body?.username,req.body?.password);if(!user)return res.status(401).json({error:'Invalid credentials'});store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'LOGIN_SUCCESS',actor:user.username});res.json({token:security.token(user),user})});
+app.get('/api/auth/me',security.auth,(req,res)=>res.json({user:req.user}));
+app.post('/api/ingest/event',security.apiKey,(req,res)=>{try{const e=normalize(req.body);store.addEvents([e]);const alert=detection.evaluate(e,store.getEvents());if(alert){store.addAlert(alert);broadcast({type:'alert',alert})}broadcast({type:'event',event:e});res.status(201).json({event:e,alert})}catch(err){res.status(400).json({error:err.message})}});
+app.post('/api/ingest/bulk',security.apiKey,(req,res)=>{try{if(!Array.isArray(req.body)||req.body.length>1000)throw Error('Payload must contain 1-1000 events');const items=req.body.map(normalize);store.addEvents(items);items.forEach(e=>{const a=detection.evaluate(e,store.getEvents());if(a){store.addAlert(a);broadcast({type:'alert',alert:a})}broadcast({type:'event',event:e})});res.status(201).json({count:items.length})}catch(err){res.status(400).json({error:err.message})}});
+app.get('/api/events',security.auth,(req,res)=>{store.prune();let result=[...store.getEvents()].reverse();if(req.query.severity)result=result.filter(e=>e.severity===String(req.query.severity).toUpperCase());if(req.query.category)result=result.filter(e=>e.category===req.query.category);if(req.query.search){const q=String(req.query.search).toLowerCase();result=result.filter(e=>JSON.stringify(e).toLowerCase().includes(q))}const offset=Math.max(0,Number(req.query.offset)||0),limit=Math.min(200,Math.max(1,Number(req.query.limit)||50));res.json({events:result.slice(offset,offset+limit),total:result.length})});
+app.get('/api/alerts',security.auth,(req,res)=>res.json({alerts:store.getAlerts().filter(a=>!req.query.status||a.status===req.query.status)}));
+app.patch('/api/alerts/:id',security.auth,(req,res)=>{if(req.user.role!=='admin')return res.status(403).json({error:'Forbidden'});if(!['NEW','ACKNOWLEDGED','RESOLVED','CLOSED'].includes(req.body?.status))return res.status(400).json({error:'Invalid status'});const a=store.updateAlert(req.params.id,req.body.status,req.user.username);if(!a)return res.status(404).json({error:'Alert not found'});store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'ALERT_STATUS_CHANGE',actor:req.user.username,target:a.id,status:a.status});broadcast({type:'alert.updated',alert:a});res.json({alert:a})});
+app.get('/api/stats/summary',security.auth,(_q,res)=>{const es=store.getEvents(),as=store.getAlerts();res.json({totalEvents:es.length,openAlerts:as.filter(a=>a.status==='NEW').length,criticalEvents:es.filter(e=>e.severity==='CRITICAL').length,highEvents:es.filter(e=>e.severity==='HIGH').length,sources:new Set(es.map(e=>e.source_ip)).size})});
+app.get('/api/audit',security.auth,(req,res)=>res.json({audit:store.getAudit().slice(-100).reverse()}));app.use('/api',(_q,r)=>r.status(404).json({error:'Not Found'}));
+app.use(express.static(require('path').join(__dirname,'..','frontend','dist')));app.get('*',(_q,r)=>r.sendFile(require('path').join(__dirname,'..','frontend','dist','index.html')));
+const server=app.listen(config.port,()=>console.log(`Sentinel SIEM listening on ${config.port}`));const wss=new WebSocketServer({noServer:true});server.on('upgrade',(req,socket,head)=>{if(!req.url.startsWith('/ws'))return socket.destroy();try{security.auth({headers:{authorization:'Bearer '+new URL(req.url,'http://localhost').searchParams.get('token')}},{status:()=>({}),json:()=>{}} ,()=>{})}catch{}const token=new URL(req.url,'http://localhost').searchParams.get('token');try{require('jsonwebtoken').verify(token,config.jwtSecret,{issuer:'sentinel-siem'})}catch{socket.write('HTTP/1.1 401 Unauthorized\\r\\n\\r\\n');return socket.destroy()}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req))});wss.on('connection',ws=>{clients.add(ws);ws.on('close',()=>clients.delete(ws));});
+process.on('SIGTERM',()=>server.close(()=>process.exit(0)));

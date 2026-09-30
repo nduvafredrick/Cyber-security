@@ -1,198 +1,102 @@
-# 🛡️ Sentinel SIEM
+# Sentinel SIEM
 
-A simple, secure Security Information & Event Management platform for ingesting and analyzing security events.
+Sentinel is a compact Security Information & Event Management (SIEM) platform for collecting, searching and monitoring security events.
 
-## Quick Start (Development)
-
-### Prerequisites
-- Node.js 20+
-- npm
-
-### Setup
-
-```bash
-# 1. Backend
-cd backend
-npm install
-cp .env.example .env
-# Edit .env: set JWT_SECRET, INGEST_API_KEY, and ADMIN_PASSWORD
-# (or use: node -e "console.log(require('bcryptjs').hashSync('yourpassword', 12))" and set ADMIN_PASSWORD_HASH)
-node server.js
-
-# 2. Frontend (in another terminal)
-cd frontend
-npm install
-npm run dev
-# Open http://localhost:5173
-```
-
-### First Login
-
-Enter any username (e.g., "admin") and the password you set in `.env`.
-
----
-
-## Production (Docker)
-
-### Setup
-
-```bash
-# Generate secrets (keep these safe)
-export JWT_SECRET=$(openssl rand -hex 32)
-export INGEST_API_KEY=$(openssl rand -hex 20)
-
-# Generate admin password hash
-export ADMIN_PASSWORD_HASH=$(node -e "console.log(require('bcryptjs').hashSync('YOUR_PASSWORD', 12))")
-
-# (Optional) Set domain for CORS
-export CORS_ORIGIN=https://yourdomain.com
-
-# Build and run
-docker compose up -d
-
-# Seed demo events (first time only)
-docker exec sentinel-siem node scripts/seed.js
-
-# Check health
-curl http://localhost:3001/health
-```
-
-### Configuration
-
-All environment variables:
-
-| Variable | Required | Default | Notes |
-|---|---|---|---|
-| `JWT_SECRET` | ✅ | — | 32+ random hex chars |
-| `INGEST_API_KEY` | ✅ | — | API key for event ingestion |
-| `ADMIN_PASSWORD_HASH` | ✅ | — | Bcrypt hash of admin password |
-| `ADMIN_USER` | — | `admin` | Admin username |
-| `CORS_ORIGIN` | — | `http://localhost:3001` | Comma-separated origins or domain |
-| `LOG_RETENTION_DAYS` | — | `90` | Event retention in days |
-| `PORT` | — | `3001` | Server port |
-| `NODE_ENV` | — | `production` in Docker | Set to `development` for dev |
-
----
-
-## API Reference
-
-### Authentication
-
-```http
-POST /api/auth/login
-Content-Type: application/json
-
-{ "username": "admin", "password": "..." }
-
-← { "token": "eyJ...", "user": { "id": 1, "username": "admin", "role": "admin" } }
-```
-
-### Event Ingest (API key required)
-
-```http
-POST /api/ingest/event
-x-api-key: your-ingest-key
-Content-Type: application/json
-
-{
-  "severity": "HIGH",
-  "source_ip": "192.0.2.10",
-  "message": "Failed login attempt",
-  "category": "authentication",
-  "timestamp": "2026-09-29T08:00:00Z",
-  "hostname": "gateway"
-}
-
-← { "event": { "id": "...", "timestamp": "...", ... } }
-```
-
-Bulk ingest (up to 1000 events):
-
-```http
-POST /api/ingest/bulk
-x-api-key: your-ingest-key
-Content-Type: application/json
-
-[{ "severity": "HIGH", ... }, ...]
-
-← { "count": 42 }
-```
-
-### Events
-
-```http
-GET /api/events?severity=HIGH&category=authentication&search=failed&limit=100&offset=0
-Authorization: Bearer <token>
-
-← { "events": [...], "total": 1234 }
-```
-
-### Stats
-
-```http
-GET /api/stats/summary
-Authorization: Bearer <token>
-
-← { "totalEvents": 1234, "openAlerts": 0, "criticalEvents": 5 }
-```
-
-### WebSocket (Live Feed)
-
-```javascript
-const token = localStorage.getItem('token');
-const ws = new WebSocket(`ws://localhost:3001/ws?token=${encodeURIComponent(token)}`);
-ws.onmessage = (msg) => console.log(JSON.parse(msg.data));
-// Messages: { type: 'event', event: {...} }
-```
-
----
+## Stack
+- React + Vite
+- Node.js + Express
+- JWT authentication + bcrypt
+- WebSocket live telemetry
+- JSON persistence for the demo deployment
+- Docker / Docker Compose
 
 ## Architecture
 
 ```
-.
-├── backend/
-│   ├── server.js           # Express + WebSocket
-│   ├── package.json
-│   ├── .env.example
-│   ├── data/               # Event storage (JSON)
-│   └── scripts/seed.js     # Demo data
-├── frontend/
-│   ├── src/main.jsx        # React app
-│   ├── index.html
-│   ├── vite.config.js      # Dev proxy
-│   └── package.json
-├── Dockerfile
-├── docker-compose.yml
-└── README.md
+frontend/                 React SOC console
+  src/main.jsx            Application and views
+  src/style.css           Dark operations UI
+backend/
+  server.js               HTTP/WebSocket entry point
+  config.js               Runtime configuration
+  security.js             Authentication/API-key middleware
+  storage.js              Persistence boundary
+  detection.js            Detection rules
+  scripts/seed.js         Demo telemetry
 ```
 
----
+The storage layer is deliberately isolated so SQLite/PostgreSQL can replace the JSON implementation without rewriting the API or UI.
 
-## Security
+## Run locally
 
-- Authentication: JWT tokens (8-hour expiry)
-- Event ingest: API key (constant-time comparison)
-- Rate limiting: 10 login attempts per 15 minutes per IP
-- CORS: Restricted by origin
-- WebSocket: Requires valid JWT token
-- Input validation: Severity, IP, timestamp, string lengths
-- Docker: Non-root user, read-only where possible
+```bash
+cd backend && npm install
+cp .env.example .env
+node server.js
+```
 
----
+In another terminal:
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Open `http://localhost:5173`.
+
+## Configuration
+
+Required in production:
+- `JWT_SECRET`
+- `INGEST_API_KEY`
+- `ADMIN_PASSWORD_HASH`
+
+Optional:
+- `ADMIN_USER` (default `admin`)
+- `CORS_ORIGIN` (comma-separated)
+- `LOG_RETENTION_DAYS` (default 90)
+- `PORT` (default 3001)
+
+Generate a bcrypt password hash with:
+
+```bash
+node -e "console.log(require('bcryptjs').hashSync('YOUR_PASSWORD', 12))"
+```
+
+## API
+
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `GET /api/events`
+- `GET /api/alerts`
+- `PATCH /api/alerts/:id`
+- `GET /api/stats/summary`
+- `GET /api/audit`
+- `POST /api/ingest/event` with `x-api-key`
+- `POST /api/ingest/bulk` with `x-api-key`
+- `GET /health`
+- WebSocket: `/ws?token=<JWT>`
+
+## Security notes
+
+- Helmet security headers
+- Restricted CORS
+- Login rate limiting
+- Constant-time API-key comparison
+- JWT issuer validation and expiry
+- Input validation and payload limits
+- Non-root Docker runtime
+- Audit records for administrative authentication and alert changes
+
+This is a portfolio/demo SIEM, not a replacement for an enterprise SIEM or a security monitoring service.
 
 ## Roadmap
 
-Planned features (not yet implemented):
-
-- SQLite backend for better performance and persistence
-- Alert rules and threshold detection
-- Multi-tenancy
-- Audit log
-- More dashboard pages (Alerts, Rules, Network, Users)
-- CSV export
-
----
+1. Replace JSON persistence with SQLite/PostgreSQL.
+2. Add configurable detection-rule management.
+3. Add event ingestion connectors and source health.
+4. Add automated tests and security scanning.
+5. Add role-based users and API-key rotation.
+6. Add charts, exports and investigation timelines.
 
 ## License
 
