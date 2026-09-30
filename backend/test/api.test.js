@@ -62,6 +62,8 @@ test('login returns a session cookie and authenticated API access works',async()
   const me=await fetch(base+'/api/auth/me',{headers:{cookie}});
   assert.equal(me.status,200);
   assert.equal((await me.json()).user.username,'admin');
+  const logout=await fetch(base+'/api/auth/logout',{method:'POST',headers:{cookie}});
+  assert.equal(logout.status,204);
 });
 
 test('ingest endpoint accepts API key and event appears in filtered API results',async()=>{
