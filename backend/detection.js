@@ -3,7 +3,7 @@ const crypto=require('crypto');
 const DEFAULT_RULES=[{rule_key:'auth-bruteforce-v1',enabled:true,window_ms:300000,threshold:5,severities:['HIGH','CRITICAL'],categories:['ssh','login','authentication'],message_pattern:'/failed|invalid|denied/i',alert_severity:'CRITICAL',title:'Possible brute-force authentication attack'}];
 function parsePattern(value){
   const source=String(value||'');
-  const match=source.match(/^\\/(.*)\\/([a-z]*)$/i);
+  const match=source.match(/^\/(.*)\/([a-z]*)$/i);
   if(match)return {pattern:match[1],flags:match[2]};
   return {pattern:source,flags:''};
 }
