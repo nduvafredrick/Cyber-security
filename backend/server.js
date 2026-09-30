@@ -15,7 +15,7 @@ const bcrypt=require('bcryptjs');
 
 const app=express();
 app.disable('x-powered-by');
-app.use(helmet(config.upgradeInsecureRequests?{}:{contentSecurityPolicy:false}));
+app.use(helmet(config.upgradeInsecureRequests?{}:{contentSecurityPolicy:false,hsts:config.hsts}));
 app.use(cors({credentials:true,origin:(origin,cb)=>!origin||config.corsOrigins.includes(origin)?cb(null,true):cb(new Error('Origin not allowed'))}));
 app.use(express.json({limit:'1mb'}));
 app.use('/api',(_q,r,n)=>{r.set('Cache-Control','no-store');n()});
