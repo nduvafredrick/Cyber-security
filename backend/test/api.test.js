@@ -137,17 +137,15 @@ test('authenticated WebSocket receives subscribed live events',async()=>{
 });
 
 test('WebSocket heartbeat removes stale clients and preserves live clients',async()=>{
-  const WebSocket=require('ws');
   const {heartbeatClients}=require('../server');
-  const base='http://127.0.0.1:'+server.address().port;
-  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
-  const cookie=login.headers.get('set-cookie');
-  const ws=new WebSocket(base.replace('http','ws')+'/ws',{headers:{Cookie:cookie}});
-  await new Promise((resolve,reject)=>{ws.once('open',resolve);ws.once('error',reject)});
-  ws.isAlive=false;
-  heartbeatClients();
-  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('stale WebSocket was not terminated')),1000);ws.once('close',()=>{clearTimeout(timer);resolve()})});
-  assert.equal(ws.readyState,WebSocket.CLOSED);
+  let staleTerminated=false;
+  let livePinged=false;
+  const stale={isAlive:false,terminate:()=>{staleTerminated=true}};
+  const live={isAlive:true,ping:()=>{livePinged=true}};
+  heartbeatClients(new Set([stale,live]));
+  assert.equal(staleTerminated,true);
+  assert.equal(live.isAlive,false);
+  assert.equal(livePinged,true);
 });
 
 test('admin can create an analyst and manage rotatable ingest keys',async()=>{
@@ -183,6 +181,7 @@ test('analyst sessions cannot change alert status',async()=>{
 test('admin can update a persistent detection rule',async()=>{
   const base='http://127.0.0.1:'+server.address().port;
   const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  assert.equal(login.status,200);
   const cookie=login.headers.get('set-cookie');
   const update=await fetch(base+'/api/admin/detection-rules/auth-bruteforce-v1',{method:'PUT',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'SSH authentication burst',description:'Configurable test rule',enabled:true,window_ms:300000,threshold:3,severities:['HIGH','CRITICAL'],categories:['ssh'],message_pattern:'/failed|invalid/i',alert_severity:'CRITICAL',title:'Authentication burst detected'})});
   assert.equal(update.status,200);
