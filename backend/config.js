@@ -25,6 +25,7 @@ const config={
   dbBusyTimeoutMs:Math.max(1000,Math.floor(Number(process.env.DB_BUSY_TIMEOUT_MS||5000))),
   backupDir:path.resolve(process.env.BACKUP_DIR||path.join(dataDir,'backups')),
   backupRetentionCount:Math.max(1,Math.floor(Number(process.env.BACKUP_RETENTION_COUNT||7))),
+  trustProxy:(v=>v==null||v===''||v==='false'?false:v==='true'?true:/^\d+$/.test(v)?Number(v):v)(process.env.TRUST_PROXY),
   ingestRateLimitPerMinute:Math.max(1,Math.floor(Number(process.env.INGEST_RATE_LIMIT_PER_MINUTE||300))),
   bulkIngestRateLimitPerMinute:Math.max(1,Math.floor(Number(process.env.BULK_INGEST_RATE_LIMIT_PER_MINUTE||60))),
   sessionCookieSecure:process.env.SESSION_COOKIE_SECURE==null?env==='production':process.env.SESSION_COOKIE_SECURE==='true',
