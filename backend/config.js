@@ -40,6 +40,7 @@ if(env==='production'){
   required('INGEST_API_KEY',process.env.INGEST_API_KEY);
   required('METRICS_API_KEY',config.metricsApiKey);
   required('ADMIN_PASSWORD_HASH',config.adminPasswordHash);
+  required('DATABASE_URL',config.databaseUrl);
   if(config.jwtSecret.length<32)throw new Error('JWT_SECRET must be at least 32 characters in production');
   if(config.ingestKey.length<20)throw new Error('INGEST_API_KEY must be at least 20 characters in production');
   if(config.metricsApiKey.length<20)throw new Error('METRICS_API_KEY must be at least 20 characters in production');
