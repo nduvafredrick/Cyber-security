@@ -2,10 +2,10 @@ FROM node:20-alpine
 WORKDIR /app
 RUN apk add --no-cache python3 make g++
 COPY backend/package.json ./backend/
-RUN cd backend && npm install --omit=dev --no-audit --no-fund
+RUN cd backend && npm ci --omit=dev --no-audit --no-fund
 COPY backend/ ./backend/
 COPY frontend/package.json ./frontend/
-RUN cd frontend && npm install --no-audit --no-fund
+RUN cd frontend && npm ci --no-audit --no-fund
 COPY frontend/ ./frontend/
 RUN cd frontend && npm run build
 RUN mkdir -p /app/backend/data && chown -R node:node /app
