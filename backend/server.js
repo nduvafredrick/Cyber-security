@@ -55,7 +55,10 @@ app.patch('/api/alerts/:id',security.auth,(req,res)=>{if(req.user.role!=='admin'
 app.get('/api/stats/summary',security.auth,(_q,res)=>res.json(store.getStats()));
 app.get('/api/audit',security.auth,(_q,res)=>res.json({audit:store.getAudit()}));
 app.use('/api',(_q,r)=>r.status(404).json({error:'Not Found'}));
-app.use(express.static(path.join(__dirname,'..','frontend','dist'),{setHeaders:(res,file)=>{if(file.endsWith('index.html'))res.setHeader('Cache-Control','no-store');else res.setHeader('Cache-Control','public,max-age=31536000,immutable')}}));
+const frontendDist=path.join(__dirname,'..','frontend','dist');
+const frontendAssets=path.join(frontendDist,'assets');
+app.use('/assets',express.static(frontendAssets,{fallthrough:false,setHeaders:res=>res.setHeader('Cache-Control','public,max-age=31536000,immutable')}));
+app.use(express.static(frontendDist,{index:'index.html',setHeaders:(res,file)=>{if(file.endsWith('index.html'))res.setHeader('Cache-Control','no-store')}}));
 app.get('*',(_q,r)=>r.sendFile(path.join(__dirname,'..','frontend','dist','index.html')));
 const wss=new WebSocketServer({noServer:true});let server;
 function attachWebSocket(){server.on('upgrade',(req,socket,head)=>{if(!req.url.startsWith('/ws'))return socket.destroy();const token=security.readCookie(req,security.COOKIE_NAME);try{security.verifyToken(token)}catch{socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');return socket.destroy()}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req))})}
