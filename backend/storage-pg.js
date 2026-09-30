@@ -122,7 +122,7 @@ async function upsertRule(r,user,organizationId){
 }
 async function getStats(organizationId){
   await ensure();requireOrganization(organizationId);
-  return (await q('SELECT (SELECT COUNT(*)::int FROM events WHERE organization_id=$1) "totalEvents",(SELECT COUNT(*)::int FROM events WHERE organization_id=$1 AND severity=''CRITICAL'') "criticalEvents",(SELECT COUNT(*)::int FROM events WHERE organization_id=$1 AND severity=''HIGH'') "highEvents",(SELECT COUNT(DISTINCT source_ip)::int FROM events WHERE organization_id=$1) sources,(SELECT COUNT(*)::int FROM alerts WHERE organization_id=$1 AND status=''NEW'') "openAlerts"',[organizationId]))[0];
+  return (await q("SELECT (SELECT COUNT(*)::int FROM events WHERE organization_id=$1) \"totalEvents\",(SELECT COUNT(*)::int FROM events WHERE organization_id=$1 AND severity='CRITICAL') \"criticalEvents\",(SELECT COUNT(*)::int FROM events WHERE organization_id=$1 AND severity='HIGH') \"highEvents\",(SELECT COUNT(DISTINCT source_ip)::int FROM events WHERE organization_id=$1) sources,(SELECT COUNT(*)::int FROM alerts WHERE organization_id=$1 AND status='NEW') \"openAlerts\"",[organizationId]))[0];
 }
 async function addEvents(items){
   await ensure();
