@@ -1,0 +1,158 @@
+const DEFAULT_ORGANIZATION_ID='org-default';
+const DEFAULT_ORGANIZATION_NAME='Default Organization';
+const DEFAULT_ORGANIZATION_SLUG='default';
+
+function now(){
+  return new Date().toISOString();
+}
+
+function sqliteMigrationV1(db){
+  db.exec([
+    'CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, severity TEXT NOT NULL, category TEXT NOT NULL, source_ip TEXT NOT NULL, message TEXT NOT NULL, hostname TEXT NOT NULL)',
+    'CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_events_severity_timestamp ON events(severity,timestamp DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_events_source_timestamp ON events(source_ip,timestamp DESC)',
+    'CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, source_ip TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, count INTEGER NOT NULL, updated_at TEXT, updated_by TEXT, rule_key TEXT)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_status_created ON alerts(status,created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_rule_status ON alerts(rule_key,status)',
+    'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN (''admin'',''analyst'')), enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS ingest_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, rotated_at TEXT, revoked_at TEXT, last_used_at TEXT, created_by TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS detection_rules (rule_key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, window_ms INTEGER NOT NULL, threshold INTEGER NOT NULL, severities TEXT NOT NULL, categories TEXT NOT NULL, message_pattern TEXT NOT NULL, alert_severity TEXT NOT NULL, title TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, target TEXT, status TEXT)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp DESC)'
+  ].join('\\n'));
+}
+
+function sqliteMigrationV2(db){
+  db.exec('CREATE TABLE IF NOT EXISTS organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)');
+  db.prepare('INSERT OR IGNORE INTO organizations(id,name,slug,created_at,updated_at) VALUES (?,?,?,?,?)').run(DEFAULT_ORGANIZATION_ID,DEFAULT_ORGANIZATION_NAME,DEFAULT_ORGANIZATION_SLUG,now(),now());
+
+  db.pragma('foreign_keys = OFF');
+  try{
+    const migrate=db.transaction(()=>{
+      db.exec('CREATE TABLE users_new (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id TEXT NOT NULL REFERENCES organizations(id), username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN (''admin'',''analyst'')), enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)');
+      db.prepare('INSERT INTO users_new(id,organization_id,username,password_hash,role,enabled,created_at,updated_at) SELECT id,?,username,password_hash,role,enabled,created_at,updated_at FROM users').run(DEFAULT_ORGANIZATION_ID);
+      db.exec('DROP TABLE users');
+      db.exec('ALTER TABLE users_new RENAME TO users');
+
+      db.exec('CREATE TABLE ingest_keys_new (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, rotated_at TEXT, revoked_at TEXT, last_used_at TEXT, created_by TEXT NOT NULL)');
+      db.prepare('INSERT INTO ingest_keys_new(id,organization_id,name,key_hash,key_prefix,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by) SELECT id,?,name,key_hash,key_prefix,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys').run(DEFAULT_ORGANIZATION_ID);
+      db.exec('DROP TABLE ingest_keys');
+      db.exec('ALTER TABLE ingest_keys_new RENAME TO ingest_keys');
+
+      db.exec('CREATE TABLE events_new (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), timestamp TEXT NOT NULL, severity TEXT NOT NULL, category TEXT NOT NULL, source_ip TEXT NOT NULL, message TEXT NOT NULL, hostname TEXT NOT NULL)');
+      db.prepare('INSERT INTO events_new(id,organization_id,timestamp,severity,category,source_ip,message,hostname) SELECT id,?,timestamp,severity,category,source_ip,message,hostname FROM events').run(DEFAULT_ORGANIZATION_ID);
+      db.exec('DROP TABLE events');
+      db.exec('ALTER TABLE events_new RENAME TO events');
+
+      db.exec('CREATE TABLE alerts_new (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), created_at TEXT NOT NULL, source_ip TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, count INTEGER NOT NULL, updated_at TEXT, updated_by TEXT, rule_key TEXT)');
+      db.prepare('INSERT INTO alerts_new(id,organization_id,created_at,source_ip,severity,status,title,description,count,updated_at,updated_by,rule_key) SELECT id,?,created_at,source_ip,severity,status,title,description,count,updated_at,updated_by,rule_key FROM alerts').run(DEFAULT_ORGANIZATION_ID);
+      db.exec('DROP TABLE alerts');
+      db.exec('ALTER TABLE alerts_new RENAME TO alerts');
+
+      db.exec('CREATE TABLE detection_rules_new (organization_id TEXT NOT NULL REFERENCES organizations(id), rule_key TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, window_ms INTEGER NOT NULL, threshold INTEGER NOT NULL, severities TEXT NOT NULL, categories TEXT NOT NULL, message_pattern TEXT NOT NULL, alert_severity TEXT NOT NULL, title TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL, PRIMARY KEY (organization_id,rule_key))');
+      db.prepare('INSERT INTO detection_rules_new(organization_id,rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by) SELECT ?,rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by FROM detection_rules').run(DEFAULT_ORGANIZATION_ID);
+      db.exec('DROP TABLE detection_rules');
+      db.exec('ALTER TABLE detection_rules_new RENAME TO detection_rules');
+
+      db.exec('CREATE TABLE audit_new (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), timestamp TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, target TEXT, status TEXT)');
+      db.prepare('INSERT INTO audit_new(id,organization_id,timestamp,action,actor,target,status) SELECT id,?,timestamp,action,actor,target,status FROM audit').run(DEFAULT_ORGANIZATION_ID);
+      db.exec('DROP TABLE audit');
+      db.exec('ALTER TABLE audit_new RENAME TO audit');
+
+      db.exec([
+        'CREATE INDEX idx_events_timestamp ON events(timestamp DESC)',
+        'CREATE INDEX idx_events_severity_timestamp ON events(severity,timestamp DESC)',
+        'CREATE INDEX idx_events_source_timestamp ON events(source_ip,timestamp DESC)',
+        'CREATE INDEX idx_events_org_timestamp ON events(organization_id,timestamp DESC)',
+        'CREATE INDEX idx_events_org_severity_timestamp ON events(organization_id,severity,timestamp DESC)',
+        'CREATE INDEX idx_events_org_source_timestamp ON events(organization_id,source_ip,timestamp DESC)',
+        'CREATE INDEX idx_alerts_status_created ON alerts(status,created_at DESC)',
+        'CREATE INDEX idx_alerts_rule_status ON alerts(rule_key,status)',
+        'CREATE INDEX idx_alerts_org_status_created ON alerts(organization_id,status,created_at DESC)',
+        'CREATE INDEX idx_alerts_org_rule_status ON alerts(organization_id,rule_key,status)',
+        'CREATE INDEX idx_users_org_username ON users(organization_id,username)',
+        'CREATE INDEX idx_ingest_keys_org_created ON ingest_keys(organization_id,created_at DESC)',
+        'CREATE INDEX idx_rules_org_enabled ON detection_rules(organization_id,enabled)',
+        'CREATE INDEX idx_audit_timestamp ON audit(timestamp DESC)',
+        'CREATE INDEX idx_audit_org_timestamp ON audit(organization_id,timestamp DESC)'
+      ].join('\\n'));
+    });
+    migrate();
+  }finally{
+    db.pragma('foreign_keys = ON');
+  }
+}
+
+function runSqliteMigrations(db){
+  db.exec('CREATE TABLE IF NOT EXISTS _schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)');
+  const applied=new Set(db.prepare('SELECT version FROM _schema_migrations').all().map(row=>row.version));
+  const migrations=[[1,sqliteMigrationV1],[2,sqliteMigrationV2]];
+  for(const [version,migration] of migrations){
+    if(applied.has(version))continue;
+    migration(db);
+    db.prepare('INSERT INTO _schema_migrations(version,applied_at) VALUES(?,?)').run(version,now());
+  }
+}
+
+async function postgresMigrationV1(q){
+  await q([
+    'CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,timestamp TIMESTAMPTZ NOT NULL,severity TEXT NOT NULL,category TEXT NOT NULL,source_ip TEXT NOT NULL,message TEXT NOT NULL,hostname TEXT NOT NULL)',
+    'CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_events_severity_timestamp ON events(severity,timestamp DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_events_source_timestamp ON events(source_ip,timestamp DESC)',
+    'CREATE TABLE IF NOT EXISTS alerts(id TEXT PRIMARY KEY,created_at TIMESTAMPTZ NOT NULL,source_ip TEXT NOT NULL,severity TEXT NOT NULL,status TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,count INTEGER NOT NULL,updated_at TIMESTAMPTZ,updated_by TEXT,rule_key TEXT)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_status_created ON alerts(status,created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_rule_status ON alerts(rule_key,status)',
+    'CREATE TABLE IF NOT EXISTS users(id SERIAL PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN (''admin'',''analyst'')),enabled BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ NOT NULL,updated_at TIMESTAMPTZ NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS ingest_keys(id TEXT PRIMARY KEY,name TEXT NOT NULL,key_hash TEXT NOT NULL UNIQUE,key_prefix TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ NOT NULL,rotated_at TIMESTAMPTZ,revoked_at TIMESTAMPTZ,last_used_at TIMESTAMPTZ,created_by TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS detection_rules(rule_key TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT TRUE,window_ms BIGINT NOT NULL,threshold INTEGER NOT NULL,severities JSONB NOT NULL,categories JSONB NOT NULL,message_pattern TEXT NOT NULL,alert_severity TEXT NOT NULL,title TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL,updated_by TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,timestamp TIMESTAMPTZ NOT NULL,action TEXT NOT NULL,actor TEXT NOT NULL,target TEXT,status TEXT)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp DESC)'
+  ].join('\\n'));
+}
+
+async function postgresMigrationV2(q){
+  await q('CREATE TABLE IF NOT EXISTS organizations(id TEXT PRIMARY KEY,name TEXT NOT NULL,slug TEXT NOT NULL UNIQUE,created_at TIMESTAMPTZ NOT NULL,updated_at TIMESTAMPTZ NOT NULL)');
+  await q('INSERT INTO organizations(id,name,slug,created_at,updated_at) VALUES($1,$2,$3,NOW(),NOW()) ON CONFLICT(id) DO NOTHING',[DEFAULT_ORGANIZATION_ID,DEFAULT_ORGANIZATION_NAME,DEFAULT_ORGANIZATION_SLUG]);
+
+  for(const table of ['events','alerts','users','ingest_keys','detection_rules','audit']){
+    await q('ALTER TABLE '+table+' ADD COLUMN IF NOT EXISTS organization_id TEXT');
+    await q('UPDATE '+table+' SET organization_id=$1 WHERE organization_id IS NULL',[DEFAULT_ORGANIZATION_ID]);
+    await q('ALTER TABLE '+table+' ALTER COLUMN organization_id SET NOT NULL');
+    await q('ALTER TABLE '+table+' ADD CONSTRAINT '+table+'_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES organizations(id)');
+  }
+
+  await q('ALTER TABLE detection_rules DROP CONSTRAINT IF EXISTS detection_rules_pkey');
+  await q('ALTER TABLE detection_rules ADD CONSTRAINT detection_rules_pkey PRIMARY KEY (organization_id,rule_key)');
+  await q([
+    'CREATE INDEX IF NOT EXISTS idx_events_org_timestamp ON events(organization_id,timestamp DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_events_org_severity_timestamp ON events(organization_id,severity,timestamp DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_events_org_source_timestamp ON events(organization_id,source_ip,timestamp DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_org_status_created ON alerts(organization_id,status,created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_org_rule_status ON alerts(organization_id,rule_key,status)',
+    'CREATE INDEX IF NOT EXISTS idx_users_org_username ON users(organization_id,username)',
+    'CREATE INDEX IF NOT EXISTS idx_ingest_keys_org_created ON ingest_keys(organization_id,created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_rules_org_enabled ON detection_rules(organization_id,enabled)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_org_timestamp ON audit(organization_id,timestamp DESC)'
+  ].join('\\n'));
+}
+
+async function runPostgresMigrations(q){
+  await q('CREATE TABLE IF NOT EXISTS _schema_migrations(version INTEGER PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL)');
+  const applied=new Set((await q('SELECT version FROM _schema_migrations')).map(row=>Number(row.version)));
+  const migrations=[[1,postgresMigrationV1],[2,postgresMigrationV2]];
+  for(const [version,migration] of migrations){
+    if(applied.has(version))continue;
+    await migration(q);
+    await q('INSERT INTO _schema_migrations(version,applied_at) VALUES($1,NOW())',[version]);
+  }
+}
+
+module.exports={
+  DEFAULT_ORGANIZATION_ID,
+  DEFAULT_ORGANIZATION_NAME,
+  DEFAULT_ORGANIZATION_SLUG,
+  runSqliteMigrations,
+  runPostgresMigrations
+};
