@@ -7,8 +7,22 @@ test.before(async()=>{browser=await chromium.launch({headless:true})});
 test.after(async()=>{await browser?.close()});
 
 async function login(page){
-  await page.goto('http://127.0.0.1:3002/');
-  await page.getByPlaceholder('Username').fill('admin');
+  const errors=[];
+  page.on('console',msg=>{if(msg.type()==='error')errors.push('console: '+msg.text())});
+  page.on('pageerror',err=>errors.push('pageerror: '+err.message));
+  const response=await page.goto('http://127.0.0.1:3002/',{waitUntil:'networkidle'});
+  assert.ok(response,'UI page did not return a response');
+  assert.equal(response.status(),200);
+  await page.waitForTimeout(500);
+  const rootChildren=await page.locator('#root').locator('> *').count();
+  if(rootChildren===0){
+    const body=await page.locator('body').innerText().catch(()=> '');
+    throw new Error('React app did not mount. '+errors.join(' | ')+' BODY='+body.slice(0,500));
+  }
+  await page.getByPlaceholder('Username').fill('admin',{timeout:5000}).catch(async err=>{
+    const body=await page.locator('body').innerText().catch(()=> '');
+    throw new Error('Login form missing. '+errors.join(' | ')+' BODY='+body.slice(0,500)+' URL='+page.url());
+  });
   await page.getByPlaceholder('Password').fill('ci-password');
   await page.getByRole('button',{name:'Sign in to console'}).click();
 }
