@@ -1,4 +1,4 @@
-const {test,expect}=require('@playwright/test');
+const {test,expect}=require('playwright/test');
 
 test('Sentinel console signs in and renders the SOC dashboard',async({page})=>{
   await page.goto('/');
