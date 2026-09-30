@@ -53,11 +53,9 @@ jobs:
           docker run -d --name sentinel-browser             -e NODE_ENV=production             -e JWT_SECRET=ci-jwt-secret-012345678901234567890123456789             -e INGEST_API_KEY=ci-ingest-key-0123456789             -e ADMIN_PASSWORD_HASH="$ADMIN_HASH"             -p 3002:3001 sentinel-siem:ci
           for i in {1..20}; do curl -fsS http://127.0.0.1:3002/ready && break; sleep 2; done
           cd frontend
-          npx --yes playwright@1.55.0 install --with-deps chromium
-          cat > /tmp/sentinel-playwright.config.js <<'EOF'
-          module.exports={testDir:process.cwd()+'/test',timeout:30000,use:{browserName:'chromium',baseURL:'http://127.0.0.1:3002',headless:true}}
-          EOF
-          npx --yes playwright@1.55.0 test --config=/tmp/sentinel-playwright.config.js
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+          node --test test/ui.test.js
       - name: Stop smoke test container
         if: always()
         run: docker rm -f sentinel-ci || true
