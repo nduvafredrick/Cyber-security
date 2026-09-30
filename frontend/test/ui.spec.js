@@ -1,7 +1,7 @@
 const {test,expect}=require('@playwright/test');
 
 test('Sentinel console signs in and renders the SOC dashboard',async({page})=>{
-  await page.goto('http://127.0.0.1:3001/');
+  await page.goto('/');
   await expect(page.getByRole('heading',{name:'Sentinel'})).toBeVisible();
   await page.getByPlaceholder('Username').fill('admin');
   await page.getByPlaceholder('Password').fill('ci-password');
@@ -13,7 +13,7 @@ test('Sentinel console signs in and renders the SOC dashboard',async({page})=>{
 });
 
 test('Events view supports search and severity filtering',async({page})=>{
-  await page.goto('http://127.0.0.1:3001/');
+  await page.goto('/');
   await page.getByPlaceholder('Username').fill('admin');
   await page.getByPlaceholder('Password').fill('ci-password');
   await page.getByRole('button',{name:'Sign in to console'}).click();
