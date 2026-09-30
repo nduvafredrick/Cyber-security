@@ -23,7 +23,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp DESC);`);
  await q("INSERT INTO detection_rules(rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by) VALUES('auth-bruteforce-v1','Authentication brute force','Repeated failed authentication attempts from one source.',TRUE,300000,5,'[\"HIGH\",\"CRITICAL\"]'::jsonb,'[\"ssh\",\"login\",\"authentication\"]'::jsonb,'/failed|invalid|denied/i','CRITICAL','Possible brute-force authentication attack',NOW(),'system') ON CONFLICT(rule_key) DO NOTHING");
 })();
 const ensure=()=>ready;
-async function getEvents(o={}){await ensure();const {search='',severity='',category='',source_ip='',since='',limit,offset=0}=o;const c=[],v=[];const add=(x,s)=>{v.push(x);c.push(s.replaceAll('?', '$'+v.length))};if(search)add('%'+search.toLowerCase()+'%','(lower(message) LIKE ? OR lower(category) LIKE ? OR lower(source_ip) LIKE ? OR lower(hostname) LIKE ?)');if(search){v.splice(v.length-1,0,v[v.length-1],v[v.length-1],v[v.length-1]);}if(severity)add(severity,'severity=?');if(category)add(category,'category=?');if(source_ip)add(source_ip,'source_ip=?');if(since)add(since,'timestamp>=?');const w=c.length?' WHERE '+c.join(' AND '):'';const total=Number((await q('SELECT COUNT(*) count FROM events'+w,v))[0].count);const rows=limit===undefined?await q('SELECT * FROM events'+w+' ORDER BY timestamp DESC',v):await q('SELECT * FROM events'+w+' ORDER BY timestamp DESC LIMIT $'+(v.length+1)+' OFFSET $'+(v.length+2),[...v,limit,offset]);return {events:rows,total};}
+async function getEvents(o={}){
+ await ensure();
+ const {search='',severity='',category='',source_ip='',since='',limit,offset=0}=o;
+ const clauses=[],values=[];
+ const add=(value,sqlText)=>{values.push(value);clauses.push(sqlText.replace('?', '$'+values.length));};
+ if(search){values.push('%'+search.toLowerCase()+'%');const n=values.length;clauses.push('(lower(message) LIKE $'+n+' OR lower(category) LIKE $'+n+' OR lower(source_ip) LIKE $'+n+' OR lower(hostname) LIKE $'+n+')');}
+ if(severity)add(severity,'severity=?');
+ if(category)add(category,'category=?');
+ if(source_ip)add(source_ip,'source_ip=?');
+ if(since)add(since,'timestamp>=?');
+ const where=clauses.length?' WHERE '+clauses.join(' AND '):'';
+ const total=Number((await q('SELECT COUNT(*) count FROM events'+where,values))[0].count);
+ const rows=limit===undefined?await q('SELECT * FROM events'+where+' ORDER BY timestamp DESC',values):await q('SELECT * FROM events'+where+' ORDER BY timestamp DESC LIMIT $'+(values.length+1)+' OFFSET $'+(values.length+2),[...values,limit,offset]);
+ return {events:rows,total};
+}
 async function getRecentEvents(ip,since){await ensure();return q('SELECT * FROM events WHERE source_ip=$1 AND timestamp>=$2 ORDER BY timestamp DESC',[ip,since]);}
 async function getAlerts(status){await ensure();return status?q('SELECT * FROM alerts WHERE status=$1 ORDER BY created_at DESC',[status]):q('SELECT * FROM alerts ORDER BY created_at DESC');}
 async function getActiveAlert(rule,ip){await ensure();const r=await q("SELECT * FROM alerts WHERE rule_key=$1 AND source_ip=$2 AND status IN('NEW','ACKNOWLEDGED') ORDER BY created_at DESC LIMIT 1",[rule,ip]);return r[0]||null;}
