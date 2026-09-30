@@ -3,29 +3,80 @@ const assert=require('node:assert/strict');
 const fs=require('fs');
 const os=require('os');
 const path=require('path');
+const bcrypt=require('bcryptjs');
 
-test('sqlite storage persists and queries events',async()=>{
+function freshEnv(dir){
+  process.env.NODE_ENV='test';
+  process.env.DATA_DIR=dir;
+  process.env.JWT_SECRET='test-secret';
+  process.env.INGEST_API_KEY='test-ingest-key';
+  process.env.ADMIN_USER='admin';
+  process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
+  for(const key of ['../config','../storage','../security']){try{delete require.cache[require.resolve(key)]}catch{}}
+}
+function makeStore(){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sentinel-'));
-  const previous=process.env.DATA_DIR;process.env.DATA_DIR=dir;process.env.NODE_ENV='test';
-  for(const key of ['backend/config','backend/storage'])delete require.cache[require.resolve('../../'+key)];
-  const store=require('../storage');
-  const events=[
-    {id:'t1',timestamp:new Date().toISOString(),severity:'HIGH',category:'ssh',source_ip:'10.0.0.1',message:'failed login',hostname:'host-a'},
-    {id:'t2',timestamp:new Date().toISOString(),severity:'INFO',category:'system',source_ip:'10.0.0.2',message:'boot',hostname:'host-b'}
-  ];
-  store.addEvents(events);
+  freshEnv(dir);
+  return {store:require('../storage'),security:require('../security'),dir};
+}
+
+test('sqlite storage persists and queries events',()=>{
+  const {store}=makeStore();
+  const now=new Date().toISOString();
+  store.addEvents([
+    {id:'t1',timestamp:now,severity:'HIGH',category:'ssh',source_ip:'10.0.0.1',message:'failed login',hostname:'host-a'},
+    {id:'t2',timestamp:now,severity:'INFO',category:'system',source_ip:'10.0.0.2',message:'boot',hostname:'host-b'}
+  ]);
   assert.equal(store.getEvents({search:'failed',limit:10,offset:0}).total,1);
   assert.equal(store.getEvents({severity:'INFO',limit:10,offset:0}).events[0].id,'t2');
   assert.equal(store.getStats().totalEvents,2);
   store.db.close();
-  if(previous===undefined)delete process.env.DATA_DIR;else process.env.DATA_DIR=previous;
 });
 
-test('environment validation rejects weak production secrets',()=>{
-  const previous={NODE_ENV:process.env.NODE_ENV,JWT_SECRET:process.env.JWT_SECRET,INGEST_API_KEY:process.env.INGEST_API_KEY,ADMIN_PASSWORD_HASH:process.env.ADMIN_PASSWORD_HASH};
-  process.env.NODE_ENV='production';process.env.JWT_SECRET='short';process.env.INGEST_API_KEY='short';process.env.ADMIN_PASSWORD_HASH='hash';
+test('authentication accepts correct credentials and rejects incorrect ones',()=>{
+  const {security,store}=makeStore();
+  assert.deepEqual(security.login('admin','password'),{id:1,username:'admin',role:'admin'});
+  assert.equal(security.login('admin','wrong'),null);
+  assert.equal(security.login('other','password'),null);
+  store.db.close();
+});
+
+test('session token verifies with the expected issuer',()=>{
+  const {security,store}=makeStore();
+  const user={id:1,username:'admin',role:'admin'};
+  const jwt=security.token(user);
+  assert.deepEqual(security.verifyToken(jwt).username,'admin');
+  assert.throws(()=>security.verifyToken(jwt+'.tampered'));
+  store.db.close();
+});
+
+test('production environment validation rejects weak secrets',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sentinel-'));
+  process.env.NODE_ENV='production';
+  process.env.DATA_DIR=dir;
+  process.env.JWT_SECRET='short';
+  process.env.INGEST_API_KEY='short';
+  process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
   delete require.cache[require.resolve('../config')];
   assert.throws(()=>require('../config'),/at least 32 characters/);
-  Object.assign(process.env,previous);
-  delete require.cache[require.resolve('../config')];
+  process.env.NODE_ENV='test';
+});
+
+test('detection creates an alert after repeated failed authentication events',()=>{
+  const detection=require('../detection');
+  const now=Date.now();
+  const events=Array.from({length:5},(_,i)=>({
+    id:'e'+i,timestamp:new Date(now-i*30000).toISOString(),severity:'HIGH',
+    category:'ssh',source_ip:'10.0.0.9',message:'failed authentication',hostname:'host'
+  }));
+  const alert=detection.evaluate(events[0],events);
+  assert.equal(alert.severity,'CRITICAL');
+  assert.match(alert.title,/brute-force/i);
+  assert.equal(alert.source_ip,'10.0.0.9');
+});
+
+test('detection ignores unrelated low-severity events',()=>{
+  const detection=require('../detection');
+  const event={id:'x',timestamp:new Date().toISOString(),severity:'LOW',category:'system',source_ip:'10.0.0.1',message:'failed authentication',hostname:'host'};
+  assert.equal(detection.evaluate(event,[event]),null);
 });
