@@ -75,10 +75,11 @@ test('ingest endpoint accepts API key and event appears in filtered API results'
   const bad=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':'wrong'},body:'{}'});
   assert.equal(bad.status,401);
 });
+
 test('bulk ingest accepts up to 1000 events and returns created alerts',async()=>{
   const base='http://127.0.0.1:'+server.address().port;
-  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
-  const cookie=login.headers.get('set-cookie');
+  const before=await fetch(base+'/metrics');
+  const beforeBody=await before.text();
   const events=Array.from({length:5},(_,i)=>({
     severity:'HIGH',category:'ssh',source_ip:'10.1.1.10',message:'failed authentication',hostname:'bulk-host-'+i
   }));
@@ -87,6 +88,14 @@ test('bulk ingest accepts up to 1000 events and returns created alerts',async()=
   const result=await bulk.json();
   assert.equal(result.count,5);
   assert.equal(result.alerts,1);
+  const after=await fetch(base+'/metrics');
+  const afterBody=await after.text();
+  const eventCount=(body)=>Number(body.match(/sentinel_events_ingested_total (\d+)/)?.[1]);
+  const alertCount=(body)=>Number(body.match(/sentinel_alerts_created_total (\d+)/)?.[1]);
+  assert.equal(eventCount(afterBody)-eventCount(beforeBody),5);
+  assert.equal(alertCount(afterBody)-alertCount(beforeBody),1);
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  const cookie=login.headers.get('set-cookie');
   const alerts=await fetch(base+'/api/alerts',{headers:{cookie}});
   const data=await alerts.json();
   assert.equal(data.alerts.filter((a)=>a.source_ip==='10.1.1.10').length,1);
