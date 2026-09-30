@@ -92,6 +92,7 @@ app.patch('/api/admin/users/:id',security.auth,security.requireRole('admin'),(re
 });
 app.get('/api/admin/ingest-keys',security.auth,security.requireRole('admin'),(_req,res)=>res.json({keys:store.getIngestKeys()}));
 app.post('/api/admin/ingest-keys/rotate',security.auth,security.requireRole('admin'),(req,res)=>{
+  for(const existing of store.getIngestKeys().filter(k=>k.enabled))store.revokeIngestKey(existing.id,req.user.username);
   const raw=security.generateIngestKey(),key={id:crypto.randomUUID(),name:String(req.body?.name||'rotated-key').slice(0,80),raw,hash:crypto.createHash('sha256').update(raw).digest('hex'),created_by:req.user.username};
   const record=store.createIngestKey(key);
   store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'INGEST_KEY_CREATED',actor:req.user.username,target:record.id,status:'ACTIVE'});
