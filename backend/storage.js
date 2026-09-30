@@ -169,7 +169,7 @@ function getStats(organizationId){
     " (SELECT COUNT(*) FROM events WHERE organization_id=@organization_id AND severity='HIGH') highEvents,",
     " (SELECT COUNT(DISTINCT source_ip) FROM events WHERE organization_id=@organization_id) sources,",
     " (SELECT COUNT(*) FROM alerts WHERE organization_id=@organization_id AND status='NEW') openAlerts"
-  ].join('\\n')).get({organization_id:organizationId});
+  ].join('\n')).get({organization_id:organizationId});
 }
 function addEvents(items){insertMany(items)}
 function addAlert(a){
