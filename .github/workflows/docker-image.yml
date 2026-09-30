@@ -28,6 +28,9 @@ jobs:
       - name: Install frontend
         working-directory: frontend
         run: npm ci --no-audit --no-fund
+      - name: Backend syntax check
+        working-directory: backend
+        run: node --check server.js
       - name: Backend tests
         working-directory: backend
         run: npm test
