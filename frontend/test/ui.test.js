@@ -57,7 +57,7 @@ test('Company onboarding provisions a workspace and verifies its first event',as
   await page.getByRole('button',{name:'Continue to administrator'}).click();
   const email='browser-'+Date.now()+'@example.com';
   await page.getByLabel('Work email').fill(email);
-  await page.getByLabel('Password').fill('browser-onboarding-password');
+  await page.getByRole('textbox',{name:'Password',exact:true}).fill('browser-onboarding-password');
   await page.getByLabel('Confirm password').fill('browser-onboarding-password');
   await page.getByRole('button',{name:'Continue to connector'}).click();
   await page.getByLabel('Connector name').fill('Browser Test Connector');
