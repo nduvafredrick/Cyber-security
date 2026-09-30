@@ -8,7 +8,8 @@
     "dev": "node server.js",
     "test": "node --test test/*.test.js",
     "backup": "node scripts/backup.js",
-    "db:check": "node scripts/db-check.js"
+    "db:check": "node scripts/db-check.js",
+    "db:init": "node scripts/db-init.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
