@@ -15,6 +15,7 @@ const bcrypt=require('bcryptjs');
 
 const app=express();
 app.disable('x-powered-by');
+app.use((req,res,next)=>{const requestId=crypto.randomUUID();req.requestId=requestId;res.setHeader('X-Request-Id',requestId);const started=process.hrtime.bigint();res.on('finish',()=>{logger.info('http_request',{request_id:requestId,method:req.method,path:req.path,status:res.statusCode,duration_ms:Number(process.hrtime.bigint()-started)/1e6,actor:req.user?.username||null})});next()});
 app.use(helmet(config.upgradeInsecureRequests?{}:{contentSecurityPolicy:false,hsts:config.hsts}));
 const corsMiddleware=cors({credentials:true,origin:(origin,cb)=>!origin||config.corsOrigins.includes(origin)?cb(null,true):cb(new Error('Origin not allowed'))});
 app.use((req,res,next)=>{const origin=req.get('origin');if(!origin)return next();try{if(new URL(origin).host===req.get('host')){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Access-Control-Allow-Credentials','true');if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Methods','GET,HEAD,PUT,PATCH,POST,DELETE');res.setHeader('Access-Control-Allow-Headers',req.get('access-control-request-headers')||'Content-Type');return res.status(204).end()}return next()}}catch{}return corsMiddleware(req,res,next)});
@@ -61,6 +62,7 @@ const frontendAssets=path.join(frontendDist,'assets');
 app.use('/assets',express.static(frontendAssets,{fallthrough:false,setHeaders:res=>res.setHeader('Cache-Control','public,max-age=31536000,immutable')}));
 app.use(express.static(frontendDist,{index:'index.html',setHeaders:(res,file)=>{if(file.endsWith('index.html'))res.setHeader('Cache-Control','no-store')}}));
 app.get('*',(_q,r)=>r.sendFile(path.join(__dirname,'..','frontend','dist','index.html')));
+app.use((err,req,res,_next)=>{if(res.headersSent)return;const status=err.message==='Origin not allowed'?403:500;logger.error('request_failed',{request_id:req.requestId,error:err.message,status});res.status(status).json({error:status===403?'Origin not allowed':'Internal server error',request_id:req.requestId})});
 const wss=new WebSocketServer({noServer:true});let server;
 function attachWebSocket(){server.on('upgrade',(req,socket,head)=>{if(!req.url.startsWith('/ws'))return socket.destroy();const token=security.readCookie(req,security.COOKIE_NAME);try{security.verifyToken(token)}catch{socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');return socket.destroy()}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req))})}
 wss.on('connection',ws=>{ws.filter={};clients.add(ws);ws.on('message',raw=>{try{const msg=JSON.parse(raw.toString());if(msg.type==='subscribe')ws.filter={severity:['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(msg.severity)?msg.severity:'',search:String(msg.search||'').slice(0,100)}}catch{}});ws.on('close',()=>clients.delete(ws));ws.on('error',()=>{clients.delete(ws);ws.terminate()})});
