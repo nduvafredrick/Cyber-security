@@ -33,7 +33,7 @@ async function authenticatedUser(value){
 }
 function auth(req,res,next){
   try{
-    const bearer=(req.headers.authorization||'').replace(/^Bearer\\s+/i,'');
+    const bearer=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
     const value=bearer||readCookie(req,COOKIE_NAME);
     return authenticatedUser(value).then(user=>{
       req.user=user;
