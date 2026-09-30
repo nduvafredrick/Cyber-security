@@ -31,6 +31,20 @@ jobs:
       - name: Backend tests
         working-directory: backend
         run: npm test
+      - name: Database backup lifecycle
+        working-directory: backend
+        run: |
+          DB_DIR="$(mktemp -d)"
+          BACKUP_DIR="$DB_DIR/backups"
+          export NODE_ENV=test
+          export DATA_DIR="$DB_DIR"
+          export BACKUP_DIR
+          export BACKUP_RETENTION_COUNT=2
+          npm run db:init
+          npm run backup
+          npm run db:check
+          test "$(find "$BACKUP_DIR" -maxdepth 1 -name 'sentinel-*.db' -type f | wc -l)" -eq 1
+          test "$(find "$BACKUP_DIR" -maxdepth 1 -name 'sentinel-*.db' -type f -size +1k | wc -l)" -eq 1
       - name: Frontend build
         working-directory: frontend
         run: npm run build
