@@ -65,6 +65,18 @@ const wss=new WebSocketServer({noServer:true});let server;
 function attachWebSocket(){server.on('upgrade',(req,socket,head)=>{if(!req.url.startsWith('/ws'))return socket.destroy();const token=security.readCookie(req,security.COOKIE_NAME);try{security.verifyToken(token)}catch{socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');return socket.destroy()}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req))})}
 wss.on('connection',ws=>{ws.filter={};clients.add(ws);ws.on('message',raw=>{try{const msg=JSON.parse(raw.toString());if(msg.type==='subscribe')ws.filter={severity:['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(msg.severity)?msg.severity:'',search:String(msg.search||'').slice(0,100)}}catch{}});ws.on('close',()=>clients.delete(ws));ws.on('error',()=>{clients.delete(ws);ws.terminate()})});
 function startServer(){server=app.listen(config.port,()=>logger.info('server_started',{port:config.port,env:config.env,instance:config.instanceId}));attachWebSocket();return server}
+let shuttingDown=false;
+function shutdown(signal){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  logger.info('server_shutdown_started',{signal});
+  for(const ws of clients)ws.close(1001,'Server shutting down');
+  wss.close();
+  if(!server)return process.exit(0);
+  server.close(()=>{try{store.close()}finally{logger.info('server_shutdown_complete');process.exit(0)}});
+  setTimeout(()=>{try{store.close()}catch{}process.exit(1)},10000).unref();
+}
 if(require.main===module)startServer();
-process.on('SIGTERM',()=>server?.close(()=>process.exit(0)));process.on('SIGINT',()=>server?.close(()=>process.exit(0)));
+process.on('SIGTERM',()=>shutdown('SIGTERM'));
+process.on('SIGINT',()=>shutdown('SIGINT'));
 module.exports={app,startServer,normalize,processEvent};
