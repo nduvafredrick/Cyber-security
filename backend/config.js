@@ -17,6 +17,7 @@ const config={
   dataDir,
   jwtSecret:process.env.JWT_SECRET||'local-development-secret',
   ingestKey:process.env.INGEST_API_KEY||'local-development-ingest-key',
+  metricsApiKey:process.env.METRICS_API_KEY||null,
   adminUser:process.env.ADMIN_USER||'admin',
   adminPasswordHash:process.env.ADMIN_PASSWORD_HASH||null,
   corsOrigins:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()).filter(Boolean),
@@ -33,8 +34,10 @@ const config={
 if(env==='production'){
   required('JWT_SECRET',process.env.JWT_SECRET);
   required('INGEST_API_KEY',process.env.INGEST_API_KEY);
+  required('METRICS_API_KEY',config.metricsApiKey);
   required('ADMIN_PASSWORD_HASH',config.adminPasswordHash);
   if(config.jwtSecret.length<32)throw new Error('JWT_SECRET must be at least 32 characters in production');
   if(config.ingestKey.length<20)throw new Error('INGEST_API_KEY must be at least 20 characters in production');
+  if(config.metricsApiKey.length<20)throw new Error('METRICS_API_KEY must be at least 20 characters in production');
 }
 module.exports=config;
