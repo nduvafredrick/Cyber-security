@@ -16,7 +16,8 @@ const bcrypt=require('bcryptjs');
 const app=express();
 app.disable('x-powered-by');
 app.use(helmet(config.upgradeInsecureRequests?{}:{contentSecurityPolicy:false,hsts:config.hsts}));
-app.use(cors({credentials:true,origin:(origin,cb)=>{if(!origin)return cb(null,true);if(config.corsOrigins.includes(origin))return cb(null,true);try{const requestHost=String(origin).replace(/^https?:\\/\\//,'').split('/')[0].toLowerCase();const host=String(process.env.HOST_HEADER||'').toLowerCase();if(host&&requestHost===host)return cb(null,true);return cb(new Error('Origin not allowed'))}catch{return cb(new Error('Origin not allowed'))}}}));
+const corsMiddleware=cors({credentials:true,origin:(origin,cb)=>!origin||config.corsOrigins.includes(origin)?cb(null,true):cb(new Error('Origin not allowed'))});
+app.use((req,res,next)=>{const origin=req.get('origin');if(!origin)return next();try{if(new URL(origin).host===req.get('host')){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Access-Control-Allow-Credentials','true');if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Methods','GET,HEAD,PUT,PATCH,POST,DELETE');res.setHeader('Access-Control-Allow-Headers',req.get('access-control-request-headers')||'Content-Type');return res.status(204).end()}return next()}}catch{}return corsMiddleware(req,res,next)});
 app.use(express.json({limit:'1mb'}));
 app.use('/api',(_q,r,n)=>{r.set('Cache-Control','no-store');n()});
 function normalize(input){
