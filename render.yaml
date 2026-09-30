@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: sentinel-siem
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /ready
+    autoDeploy: true
+    disk:
+      name: sentinel-data
+      mountPath: /app/backend/data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
+      - key: DATA_DIR
+        value: /app/backend/data
+      - key: JWT_SECRET
+        generateValue: true
+      - key: INGEST_API_KEY
+        generateValue: true
+      - key: METRICS_API_KEY
+        generateValue: true
+      - key: ADMIN_USER
+        value: admin
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: CSP_UPGRADE_INSECURE_REQUESTS
+        value: "true"
+      - key: HSTS
+        value: "true"
+      - key: LOG_RETENTION_DAYS
+        value: "90"
+      - key: DB_BUSY_TIMEOUT_MS
+        value: "5000"
+      - key: BACKUP_DIR
+        value: /app/backend/data/backups
+      - key: BACKUP_RETENTION_COUNT
+        value: "7"
+      - key: INGEST_RATE_LIMIT_PER_MINUTE
+        value: "300"
+      - key: BULK_INGEST_RATE_LIMIT_PER_MINUTE
+        value: "60"
