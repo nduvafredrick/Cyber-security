@@ -71,7 +71,7 @@ jobs:
         run: |
           ADMIN_HASH=$(node -e "console.log(require('./backend/node_modules/bcryptjs').hashSync('ci-password',4))")
           docker rm -f sentinel-browser || true
-          docker run -d --name sentinel-browser             -e NODE_ENV=production             -e JWT_SECRET=ci-jwt-secret-012345678901234567890123456789             -e INGEST_API_KEY=ci-ingest-key-0123456789             -e ADMIN_PASSWORD_HASH="$ADMIN_HASH"             -e SESSION_COOKIE_SECURE=false             -e CSP_UPGRADE_INSECURE_REQUESTS=false             -e HSTS=false             -p 3002:3001 sentinel-siem:ci
+          docker run -d --name sentinel-browser             -e NODE_ENV=production             -e JWT_SECRET=ci-jwt-secret-012345678901234567890123456789             -e INGEST_API_KEY=ci-ingest-key-0123456789             -e METRICS_API_KEY=ci-metrics-key-0123456789             -e ADMIN_PASSWORD_HASH="$ADMIN_HASH"             -e SESSION_COOKIE_SECURE=false             -e CSP_UPGRADE_INSECURE_REQUESTS=false             -e HSTS=false             -p 3002:3001 sentinel-siem:ci
           for i in {1..20}; do
             if curl -fsS http://127.0.0.1:3002/ready; then break; fi
             sleep 2
