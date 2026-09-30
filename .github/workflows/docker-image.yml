@@ -42,6 +42,7 @@ jobs:
           export BACKUP_RETENTION_COUNT=2
           npm run db:init
           npm run backup
+          npm run db:restore-test
           npm run db:check
           test "$(find "$BACKUP_DIR" -maxdepth 1 -name 'sentinel-*.db' -type f | wc -l)" -eq 1
           test "$(find "$BACKUP_DIR" -maxdepth 1 -name 'sentinel-*.db' -type f -size +1k | wc -l)" -eq 1
