@@ -119,12 +119,14 @@ Admin-only endpoints:
 - `GET/POST /api/admin/users` — list/create users
 - `PATCH /api/admin/users/:id` — enable/disable a user
 - `GET /api/admin/ingest-keys` — list key metadata without secrets
-- `POST /api/admin/ingest-keys/rotate` — create a new key and revoke active keys
+- `POST /api/admin/ingest-keys` — create an independent connector key
+- `POST /api/admin/ingest-keys/:id/rotate` — rotate one connector key without disabling other connectors
+- `POST /api/admin/ingest-keys/rotate` — legacy global rotation that revokes all active keys before issuing a replacement
 - `DELETE /api/admin/ingest-keys/:id` — revoke a key
 - `GET /api/admin/detection-rules` — list persistent rules
 - `PUT /api/admin/detection-rules/:ruleKey` — validate and update a rule
 
-Ingest keys are stored as SHA-256 hashes and the plaintext value is returned only once during rotation.
+Ingest keys are stored as SHA-256 hashes and the plaintext value is returned only once when a key is created or rotated. Prefer independent connector keys and per-key rotation so one connector can be rotated or revoked without interrupting unrelated sources.
 
 ### Monitoring
 
