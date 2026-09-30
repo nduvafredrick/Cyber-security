@@ -1,18 +1,37 @@
-name: Docker Image CI
+name: Sentinel CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main, "codex/**"]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - name: Install backend
+        working-directory: backend
+        run: npm ci
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Build Docker image
+        run: docker build --pull -t sentinel-siem:ci .
+      - name: Dependency audit
+        working-directory: backend
+        run: npm audit --omit=dev --audit-level=high
