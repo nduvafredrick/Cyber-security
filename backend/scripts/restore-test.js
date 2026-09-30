@@ -4,7 +4,7 @@ const os=require('os');
 const Database=require('better-sqlite3');
 const {backupDir}=require('../config');
 
-const expectedTables=['events','alerts','users','ingest_keys','detection_rules','audit'];
+const expectedTables=['organizations','events','alerts','users','ingest_keys','detection_rules','audit'];
 
 const backups=fs.readdirSync(backupDir,{withFileTypes:true})
   .filter(entry=>entry.isFile()&&/^sentinel-.*\.db$/.test(entry.name))
