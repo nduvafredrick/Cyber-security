@@ -2,22 +2,18 @@ services:
   - type: web
     name: sentinel-siem
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /ready
     autoDeploy: true
-    disk:
-      name: sentinel-data
-      mountPath: /app/backend/data
-      sizeGB: 10
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: "3001"
-      - key: DATA_DIR
-        value: /app/backend/data
+      - key: DATABASE_URL
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: INGEST_API_KEY
@@ -36,12 +32,6 @@ services:
         value: "true"
       - key: LOG_RETENTION_DAYS
         value: "90"
-      - key: DB_BUSY_TIMEOUT_MS
-        value: "5000"
-      - key: BACKUP_DIR
-        value: /app/backend/data/backups
-      - key: BACKUP_RETENTION_COUNT
-        value: "7"
       - key: INGEST_RATE_LIMIT_PER_MINUTE
         value: "300"
       - key: BULK_INGEST_RATE_LIMIT_PER_MINUTE
