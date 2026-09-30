@@ -85,6 +85,8 @@ Optional:
 - `SESSION_COOKIE_SECURE` — default true in production
 - `CSP_UPGRADE_INSECURE_REQUESTS` — default true in production; disable only for plain-HTTP test environments
 - `HSTS` — default true in production; requires HTTPS
+- `INGEST_RATE_LIMIT_PER_MINUTE` — per-client event ingestion limit; default 300/minute
+- `BULK_INGEST_RATE_LIMIT_PER_MINUTE` — per-client bulk ingestion request limit; default 60/minute
 
 Generate a bcrypt password hash with:
 
@@ -190,6 +192,7 @@ GitHub Actions verifies backend installation and tests, the frontend production 
 - Helmet security headers
 - Restricted CORS
 - Login rate limiting
+- Per-client ingestion rate limiting with `Retry-After`/standard rate-limit headers
 - Constant-time API-key comparison
 - JWT issuer validation and expiry
 - HttpOnly/Secure/SameSite session cookie
