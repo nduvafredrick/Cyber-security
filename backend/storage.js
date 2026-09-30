@@ -1,12 +1,13 @@
 const fs=require('fs');
 const path=require('path');
 const Database=require('better-sqlite3');
-const {dataDir,retentionDays,adminUser,adminPasswordHash,ingestKey}=require('./config');
+const {dataDir,retentionDays,adminUser,adminPasswordHash,ingestKey,dbBusyTimeoutMs}=require('./config');
 
 fs.mkdirSync(dataDir,{recursive:true});
 const db=new Database(path.join(dataDir,'sentinel.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma(`busy_timeout = ${dbBusyTimeoutMs}`);
 db.exec(`
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, severity TEXT NOT NULL,
