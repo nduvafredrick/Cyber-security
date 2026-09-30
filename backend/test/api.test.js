@@ -202,8 +202,14 @@ test('isolates events, alerts, rules, audit records, users, and ingest keys betw
   const userBId=await store.addUser({username:'company-b-admin-'+suffix,password_hash:passwordHash,role:'admin',organization_id:organizationB.id});
   const userA={id:userAId,username:'company-a-admin-'+suffix,role:'admin',organization_id:organizationA.id};
   const userB={id:userBId,username:'company-b-admin-'+suffix,role:'admin',organization_id:organizationB.id};
-  const authA={authorization:'Bearer '+security.token(userA)};
-  const authB={authorization:'Bearer '+security.token(userB)};
+  const tokenA=security.token(userA);
+  const tokenB=security.token(userB);
+  assert.equal(security.verifyToken(tokenA).organization_id,organizationA.id);
+  assert.equal((await security.authenticatedUser(tokenA)).organization_id,organizationA.id);
+  assert.equal(security.verifyToken(tokenB).organization_id,organizationB.id);
+  assert.equal((await security.authenticatedUser(tokenB)).organization_id,organizationB.id);
+  const authA={authorization:'Bearer '+tokenA};
+  const authB={authorization:'Bearer '+tokenB};
   const rawA=security.generateIngestKey();
   const rawB=security.generateIngestKey();
   const hash=(value)=>crypto.createHash('sha256').update(value).digest('hex');
@@ -239,8 +245,10 @@ test('isolates events, alerts, rules, audit records, users, and ingest keys betw
   assert.equal(eventB.status,201);
 
   const eventsA=await fetch(base+'/api/events?limit=100',{headers:authA});
+  assert.equal(eventsA.status,200);
   const eventsAData=await eventsA.json();
   const eventsB=await fetch(base+'/api/events?limit=100',{headers:authB});
+  assert.equal(eventsB.status,200);
   const eventsBData=await eventsB.json();
   assert.equal(eventsAData.events.some(e=>e.message==='tenant-a event'),true);
   assert.equal(eventsAData.events.some(e=>e.message==='tenant-b event'),false);
