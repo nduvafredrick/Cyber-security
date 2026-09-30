@@ -37,6 +37,14 @@ test('Sentinel console signs in and renders the SOC dashboard',async()=>{
   await page.close();
 });
 
+test('Authenticated users visiting onboarding see the onboarding flow',async()=>{
+  const page=await browser.newPage();
+  await login(page);
+  await page.goto('http://127.0.0.1:3002/onboarding',{waitUntil:'domcontentloaded'});
+  await page.getByRole('heading',{name:'Create your Sentinel workspace'}).waitFor({state:'visible',timeout:10000});
+  await page.close();
+});
+
 test('Events view supports search and severity filtering',async()=>{
   const page=await browser.newPage();
   await login(page);
