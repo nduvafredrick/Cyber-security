@@ -37,7 +37,7 @@ test('event ingestion returns 429 after the configured per-client limit',async()
   }
   const limited=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':'rate-limit-test-ingest-key'},body});
   assert.equal(limited.status,429);
-  assert.match(limited.headers.get('retry-after')||'',/^\\d+$/);
+  assert.match(limited.headers.get('retry-after')||'',/^\d+$/);
   assert.equal((await limited.json()).error,'Ingestion rate limit exceeded');
 });
 
@@ -61,6 +61,6 @@ test('failed authentication does not consume a valid client quota',async()=>{
     const bad=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':'wrong-key-'+i},body});
     assert.equal(bad.status,401);
   }
-  const fresh=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':'rate-limit-auth-test-key'},body});
+  const fresh=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':'rate-limit-test-ingest-key'},body});
   assert.equal(fresh.status,201);
 });
