@@ -37,7 +37,7 @@ test('sqlite storage persists and queries events',()=>{
 
 test('authentication accepts correct credentials and rejects incorrect ones',()=>{
   const {security,store}=makeStore();
-  assert.deepEqual(security.login('admin','password'),{id:1,organization_id:store.DEFAULT_ORGANIZATION_ID,username:'admin',role:'admin'});
+  assert.deepEqual(security.login('admin','password'),{id:1,organization_id:store.DEFAULT_ORGANIZATION_ID,username:'admin',email:null,role:'admin'});
   assert.equal(security.login('admin','wrong'),null);
   assert.equal(security.login('other','password'),null);
   store.db.close();
