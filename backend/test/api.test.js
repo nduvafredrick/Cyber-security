@@ -244,22 +244,54 @@ test('isolates events, alerts, rules, audit records, users, and ingest keys betw
   assert.equal(eventsBData.events.some(e=>e.message==='tenant-b event'),true);
   assert.equal(eventsBData.events.some(e=>e.message==='tenant-a event'),false);
 
+  const usersA=await fetch(base+'/api/admin/users',{headers:authA});
+  const usersB=await fetch(base+'/api/admin/users',{headers:authB});
+  assert.equal((await usersA.json()).users.some(u=>u.username===userB.username),false);
+  assert.equal((await usersB.json()).users.some(u=>u.username===userA.username),false);
+
   const rulesA=await fetch(base+'/api/admin/detection-rules',{headers:authA});
   const rulesB=await fetch(base+'/api/admin/detection-rules',{headers:authB});
   assert.equal((await rulesA.json()).rules.some(r=>r.rule_key==='company-b-rule'),false);
   assert.equal((await rulesB.json()).rules.some(r=>r.rule_key==='company-b-rule'),true);
 
+  const alertB={
+    id:'alert-company-b-'+suffix,
+    organization_id:organizationB.id,
+    created_at:new Date().toISOString(),
+    source_ip:'10.60.0.1',
+    severity:'HIGH',
+    status:'NEW',
+    title:'Company B alert',
+    description:'Tenant isolation test alert',
+    count:1,
+    updated_at:null,
+    updated_by:null,
+    rule_key:'company-b-rule'
+  };
+  await store.addAlert(alertB);
+  const alertsA=await fetch(base+'/api/alerts',{headers:authA});
+  const alertsAData=await alertsA.json();
   const alertsB=await fetch(base+'/api/alerts',{headers:authB});
   const alertsBData=await alertsB.json();
-  const crossTenantAlert=alertsBData.alerts[0];
-  if(crossTenantAlert){
-    const denied=await fetch(base+'/api/alerts/'+crossTenantAlert.id,{
-      method:'PATCH',
-      headers:{...authA,'content-type':'application/json'},
-      body:JSON.stringify({status:'RESOLVED'})
-    });
-    assert.equal(denied.status,404);
-  }
+  assert.equal(alertsAData.alerts.some(a=>a.id===alertB.id),false);
+  assert.equal(alertsBData.alerts.some(a=>a.id===alertB.id),true);
+  const denied=await fetch(base+'/api/alerts/'+alertB.id,{
+    method:'PATCH',
+    headers:{...authA,'content-type':'application/json'},
+    body:JSON.stringify({status:'RESOLVED'})
+  });
+  assert.equal(denied.status,404);
+  const resolved=await fetch(base+'/api/alerts/'+alertB.id,{
+    method:'PATCH',
+    headers:{...authB,'content-type':'application/json'},
+    body:JSON.stringify({status:'RESOLVED'})
+  });
+  assert.equal(resolved.status,200);
+
+  const statsA=await fetch(base+'/api/stats/summary',{headers:authA});
+  const statsB=await fetch(base+'/api/stats/summary',{headers:authB});
+  assert.equal((await statsA.json()).totalEvents,1);
+  assert.equal((await statsB.json()).totalEvents,1);
 
   const auditA=await fetch(base+'/api/audit',{headers:authA});
   const auditB=await fetch(base+'/api/audit',{headers:authB});
