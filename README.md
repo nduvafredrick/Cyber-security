@@ -79,6 +79,11 @@ Optional:
 - `LOG_RETENTION_DAYS` — default 90
 - `PORT` — default 3001
 - `DATA_DIR` — SQLite data directory
+- `DB_BUSY_TIMEOUT_MS` — SQLite lock wait timeout; default 5000ms
+- `BACKUP_DIR` — destination for database backups; default `DATA_DIR/backups`
+- `SESSION_COOKIE_SECURE` — default true in production
+- `CSP_UPGRADE_INSECURE_REQUESTS` — default true in production; disable only for plain-HTTP test environments
+- `HSTS` — default true in production; requires HTTPS
 
 Generate a bcrypt password hash with:
 
@@ -150,6 +155,18 @@ npm test
 
 The automated suite covers SQLite storage/query behavior, persistent authentication and roles, configurable detection rules, ingest-key rotation, API ingestion, bulk ingestion, WebSocket authentication/live delivery, duplicate-alert suppression, and production environment validation. Playwright browser tests cover sign-in, dashboard rendering, navigation, event search, and severity filtering. CI also performs the frontend build, dependency audit, Docker build, container readiness smoke test, and browser UI tests.
 
+## Database operations
+
+SQLite is currently the primary production persistence layer for a single Sentinel instance. It uses WAL mode, foreign keys, indexes, and a configurable busy timeout. Before making storage changes or upgrading the application, create and verify a backup:
+
+```bash
+cd backend
+npm run backup
+npm run db:check
+```
+
+Backups should be copied to storage outside the Sentinel data volume and periodically tested by restoring them into an isolated environment. A backup kept only on the same disk/volume does not protect against disk or volume loss.
+
 ## Docker deployment
 
 Copy `.env.example` to `.env`, replace the production secrets, then run:
@@ -158,7 +175,7 @@ Copy `.env.example` to `.env`, replace the production secrets, then run:
 docker compose up -d --build
 ```
 
-The production container runs non-root, drops Linux capabilities, enables `no-new-privileges`, uses a read-only root filesystem with a persistent data volume, has resource limits, and exposes a health check against `/ready`.
+The production container runs non-root, drops Linux capabilities, enables `no-new-privileges`, uses a read-only root filesystem with a persistent data volume, has resource limits, and exposes a health check against `/ready`. Graceful shutdown closes WebSocket clients and the SQLite connection before exit. Schedule `npm run backup` from a controlled host/maintenance process and copy backups outside the application volume.
 
 Put Sentinel behind HTTPS/reverse-proxy infrastructure for production use. A Caddy example is provided at `deploy/Caddyfile.example`; Caddy can terminate TLS and proxy both HTTP and WebSocket traffic to Sentinel.
 
