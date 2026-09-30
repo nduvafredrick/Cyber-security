@@ -127,3 +127,17 @@ test('admin can update a persistent detection rule',async()=>{
   assert.equal(rule.threshold,3);
   assert.equal(rule.enabled,true);
 });
+
+test('detection rule preserves regex flags for capitalized OpenSSH messages',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  const cookie=login.headers.get('set-cookie');
+  const update=await fetch(base+'/api/admin/detection-rules/auth-bruteforce-v1',{method:'PUT',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'SSH authentication burst',description:'Case-insensitive authentication failures',enabled:true,window_ms:300000,threshold:3,severities:['HIGH','CRITICAL'],categories:['ssh'],message_pattern:'/failed|invalid|denied/i',alert_severity:'CRITICAL',title:'Authentication burst detected'})});
+  assert.equal(update.status,200);
+  for(let i=0;i<3;i++){
+    const response=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':'api-test-ingest-key'},body:JSON.stringify({severity:'HIGH',category:'ssh',source_ip:'10.2.2.2',message:'Failed password for root',hostname:'openssh-test'})});
+    assert.equal(response.status,201);
+    if(i<2)assert.equal((await response.json()).alert,null);
+    else assert.equal((await response.json()).alert?.severity,'CRITICAL');
+  }
+});
