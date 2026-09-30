@@ -48,9 +48,14 @@ function processEvent(e){
   store.addEvents([e]);
   const recent=store.getRecentEvents(e.source_ip,new Date(Date.now()-300000).toISOString());
   const alert=detection.evaluate(e,recent);
-  if(alert){store.addAlert(alert);broadcast({type:'alert',alert})}
+  let createdAlert=null;
+  if(alert && !store.getActiveAlert(alert.rule_key,alert.source_ip)){
+    store.addAlert(alert);
+    createdAlert=alert;
+    broadcast({type:'alert',alert});
+  }
   broadcast({type:'event',event:e},true);
-  return alert;
+  return createdAlert;
 }
 
 app.get('/health',(_q,r)=>r.json({status:'ok',service:'sentinel-siem',version:'3.1.0'}));
@@ -80,7 +85,7 @@ app.post('/api/ingest/bulk',security.apiKey,(req,res)=>{
     for(const e of items){
       const recent=store.getRecentEvents(e.source_ip,new Date(Date.now()-300000).toISOString());
       const a=detection.evaluate(e,recent);
-      if(a){store.addAlert(a);alerts.push(a);broadcast({type:'alert',alert:a})}
+      if(a && !store.getActiveAlert(a.rule_key,a.source_ip)){store.addAlert(a);alerts.push(a);broadcast({type:'alert',alert:a})}
       broadcast({type:'event',event:e},true);
     }
     res.status(201).json({count:items.length,alerts:alerts.length});
