@@ -111,7 +111,7 @@ app.put('/api/admin/detection-rules/:ruleKey',security.auth,security.requireRole
     if(!rule.rule_key||!rule.name||rule.window_ms<1000||rule.window_ms>86400000||!Number.isInteger(rule.threshold)||rule.threshold<1||rule.threshold>10000)throw Error('Invalid rule configuration');
     if(!['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(rule.alert_severity))throw Error('Invalid alert severity');
     if(!rule.severities.every(x=>['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(x)))throw Error('Invalid event severity');
-    new RegExp(rule.message_pattern.replace(/^\/(.*)\/([a-z]*)$/,'$1'));
+    const patternMatch=rule.message_pattern.match(/^\/(.*)\/([a-z]*)$/i); new RegExp(patternMatch?patternMatch[1]:rule.message_pattern,patternMatch?patternMatch[2]:'');
     const saved=store.upsertRule(rule,req.user.username);
     store.addAudit({id:crypto.randomUUID(),timestamp:new Date().toISOString(),action:'DETECTION_RULE_UPDATED',actor:req.user.username,target:rule.rule_key,status:rule.enabled?'ENABLED':'DISABLED'});
     res.json({rule:{...saved,enabled:Boolean(saved.enabled),severities:JSON.parse(saved.severities),categories:JSON.parse(saved.categories)}});
