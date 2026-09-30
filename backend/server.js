@@ -48,8 +48,8 @@ function normalize(input){
   return {id:Date.now()+'-'+crypto.randomBytes(4).toString('hex'),timestamp:new Date(timestamp).toISOString(),severity,category:text(input.category||'general',100),source_ip:ip,message:text(input.message||'Event received',1000),hostname:text(input.hostname||'unknown',255)};
 }
 const clients=new Set();
-function heartbeatClients(){
-  for(const ws of clients){
+function heartbeatClients(clientSet=clients){
+  for(const ws of clientSet){
     if(ws.isAlive===false){ws.terminate();clients.delete(ws);continue}
     ws.isAlive=false;
     try{ws.ping()}catch{ws.terminate();clients.delete(ws)}
