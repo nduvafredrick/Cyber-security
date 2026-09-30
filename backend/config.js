@@ -23,6 +23,7 @@ const config={
   retentionDays:Math.max(1,Math.floor(Number(process.env.LOG_RETENTION_DAYS||90))),
   dbBusyTimeoutMs:Math.max(1000,Math.floor(Number(process.env.DB_BUSY_TIMEOUT_MS||5000))),
   backupDir:path.resolve(process.env.BACKUP_DIR||path.join(dataDir,'backups')),
+  backupRetentionCount:Math.max(1,Math.floor(Number(process.env.BACKUP_RETENTION_COUNT||7))),
   sessionCookieSecure:process.env.SESSION_COOKIE_SECURE==null?env==='production':process.env.SESSION_COOKIE_SECURE==='true',
   upgradeInsecureRequests:process.env.CSP_UPGRADE_INSECURE_REQUESTS==null?env==='production':process.env.CSP_UPGRADE_INSECURE_REQUESTS==='true',
   hsts:process.env.HSTS==null?env==='production':process.env.HSTS==='true',
