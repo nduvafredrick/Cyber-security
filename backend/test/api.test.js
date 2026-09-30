@@ -2,7 +2,8 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('fs');
 const os=require('os');
-const path=require('path');\nconst crypto=require('crypto');
+const path=require('path');
+const crypto=require('crypto');
 const bcrypt=require('bcryptjs');
 
 let server;
