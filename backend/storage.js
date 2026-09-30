@@ -1,3 +1,6 @@
+const {databaseUrl}=require('./config');
+if(databaseUrl)module.exports=require('./storage-pg');
+else {
 const fs=require('fs');
 const path=require('path');
 const Database=require('better-sqlite3');
@@ -128,3 +131,4 @@ function addAudit(a){db.prepare('INSERT OR REPLACE INTO audit(id,timestamp,actio
 function health(){db.prepare('SELECT 1').get();return true}
 function close(){db.close()}
 module.exports={db,getEvents,getRecentEvents,getAlerts,getActiveAlert,getAudit,getStats,addEvents,addAlert,updateAlert,addAudit,prune,health,getUser,listUsers,addUser,setUserEnabled,getIngestKeys,verifyIngestKey,createIngestKey,revokeIngestKey,listRules,getRules,upsertRule,close};
+}
