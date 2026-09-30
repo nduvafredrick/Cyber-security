@@ -10,10 +10,11 @@ const env=process.env.NODE_ENV||'development';
 const port=Number(process.env.PORT||3001);
 if(!Number.isInteger(port)||port<0||port>65535)throw new Error('PORT must be a valid TCP port');
 
+const dataDir=path.resolve(process.env.DATA_DIR||path.join(__dirname,'data'));
 const config={
   env,
   port,
-  dataDir:path.resolve(process.env.DATA_DIR||path.join(__dirname,'data')),
+  dataDir,
   jwtSecret:process.env.JWT_SECRET||'local-development-secret',
   ingestKey:process.env.INGEST_API_KEY||'local-development-ingest-key',
   adminUser:process.env.ADMIN_USER||'admin',
