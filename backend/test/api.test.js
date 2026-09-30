@@ -89,3 +89,41 @@ test('authenticated WebSocket receives subscribed live events',async()=>{
   assert.equal(event.message,'websocket-test event');
   ws.close();
 });
+
+test('admin can create an analyst and manage rotatable ingest keys',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  const cookie=login.headers.get('set-cookie');
+  const user=await fetch(base+'/api/admin/users',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({username:'analyst1',password:'long-test-password-123',role:'analyst'})});
+  assert.equal(user.status,201);
+  const listed=await fetch(base+'/api/admin/users',{headers:{cookie}});
+  assert.equal((await listed.json()).users.some(x=>x.username==='analyst1'&&x.role==='analyst'),true);
+  const rotated=await fetch(base+'/api/admin/ingest-keys/rotate',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'ci-rotated'})});
+  assert.equal(rotated.status,201);
+  const key=(await rotated.json()).key;
+  const ingest=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':key},body:JSON.stringify({severity:'INFO',category:'system',source_ip:'10.1.1.30',message:'rotated key works'})});
+  assert.equal(ingest.status,201);
+});
+
+test('analyst sessions cannot change alert status',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const adminLogin=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  const adminCookie=adminLogin.headers.get('set-cookie');
+  await fetch(base+'/api/admin/users',{method:'POST',headers:{'content-type':'application/json',cookie:adminCookie},body:JSON.stringify({username:'analyst2',password:'long-test-password-456',role:'analyst'})});
+  const analystLogin=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'analyst2',password:'long-test-password-456'})});
+  const analystCookie=analystLogin.headers.get('set-cookie');
+  const denied=await fetch(base+'/api/alerts/nonexistent',{method:'PATCH',headers:{'content-type':'application/json',cookie:analystCookie},body:JSON.stringify({status:'RESOLVED'})});
+  assert.equal(denied.status,403);
+});
+
+test('admin can update a persistent detection rule',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  const cookie=login.headers.get('set-cookie');
+  const update=await fetch(base+'/api/admin/detection-rules/auth-bruteforce-v1',{method:'PUT',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'SSH authentication burst',description:'Configurable test rule',enabled:true,window_ms:300000,threshold:3,severities:['HIGH','CRITICAL'],categories:['ssh'],message_pattern:'/failed|invalid/i',alert_severity:'CRITICAL',title:'Authentication burst detected'})});
+  assert.equal(update.status,200);
+  const rules=await fetch(base+'/api/admin/detection-rules',{headers:{cookie}});
+  const rule=(await rules.json()).rules.find(x=>x.rule_key==='auth-bruteforce-v1');
+  assert.equal(rule.threshold,3);
+  assert.equal(rule.enabled,true);
+});
