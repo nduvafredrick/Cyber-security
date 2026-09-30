@@ -1,6 +1,7 @@
 const crypto=require('crypto');
 
-function evaluate(event,events,rules){
+const DEFAULT_RULES=[{rule_key:'auth-bruteforce-v1',enabled:true,window_ms:300000,threshold:5,severities:['HIGH','CRITICAL'],categories:['ssh','login','authentication'],message_pattern:'/failed|invalid|denied/i',alert_severity:'CRITICAL',title:'Possible brute-force authentication attack'}];
+function evaluate(event,events,rules=DEFAULT_RULES){
   for(const rule of rules||[]){
     if(!rule.enabled)continue;
     const severities=new Set(rule.severities||[]);
@@ -27,4 +28,4 @@ function evaluate(event,events,rules){
   }
   return null;
 }
-module.exports={evaluate};
+module.exports={evaluate,DEFAULT_RULES};
