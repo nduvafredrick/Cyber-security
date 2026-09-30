@@ -396,7 +396,7 @@ test('company onboarding provisions an organization, admin, connector, session, 
   assert.equal(data.connector.name,'Production API');
   assert.equal(data.connector.environment,'Production');
   assert.match(data.connector.api_key,/^sk_/);
-  assert.match(response.headers.get('set-cookie')||'','sentinel_session=');
+  assert.match(response.headers.get('set-cookie')||'',/sentinel_session=/);
 
   const me=await fetch(base+'/api/auth/me',{headers:{cookie:response.headers.get('set-cookie')}});
   assert.equal(me.status,200);
