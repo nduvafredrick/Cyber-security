@@ -12,7 +12,7 @@ function auth(req,res,next){try{const bearer=(req.headers.authorization||'').rep
 function apiKey(req,res,next){const supplied=String(req.headers['x-api-key']||'');const key=store.verifyIngestKey(supplied);if(!key)return res.status(401).json({error:'Invalid API key'});req.ingestKey=key;next()}
 function login(username,password){const user=store.getUser(String(username||''));if(!user||!bcrypt.compareSync(String(password||''),user.password_hash))return null;return {id:user.id,username:user.username,role:user.role}}
 function setSession(res,value){const secure=sessionCookieSecure?' Secure':'';res.setHeader('Set-Cookie',COOKIE_NAME+'='+encodeURIComponent(value)+'; HttpOnly;'+secure+' SameSite=Strict; Path=/; Max-Age=28800')}
-function clearSession(res){const secure=env==='production'?' Secure':'';res.setHeader('Set-Cookie',COOKIE_NAME+'=; HttpOnly;'+secure+' SameSite=Strict; Path=/; Max-Age=0')}
+function clearSession(res,value=''){const secure=sessionCookieSecure?' Secure':'';res.setHeader('Set-Cookie',COOKIE_NAME+'='+encodeURIComponent(value)+'; HttpOnly;'+secure+' SameSite=Strict; Path=/; Max-Age=0')}
 function requireRole(role){return (req,res,next)=>{if(req.user?.role!==role)return res.status(403).json({error:'Forbidden'});next()}}
 function generateIngestKey(){return 'sk_'+crypto.randomBytes(24).toString('base64url')}
 module.exports={token,verifyToken,auth,apiKey,login,setSession,clearSession,COOKIE_NAME,readCookie,requireRole,generateIngestKey};
