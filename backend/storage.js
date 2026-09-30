@@ -198,13 +198,6 @@ function getOrganization(organizationId){
   requireOrganization(organizationId);
   return db.prepare('SELECT * FROM organizations WHERE id=?').get(organizationId)||null;
 }
-function seedDefaultRule(organizationId){
-  db.prepare('INSERT INTO detection_rules(organization_id,rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(organization_id,rule_key) DO NOTHING').run(
-    organizationId,'auth-bruteforce-v1','Authentication brute force','Repeated failed authentication attempts from one source.',1,300000,5,
-    JSON.stringify(['HIGH','CRITICAL']),JSON.stringify(['ssh','login','authentication']),'/failed|invalid|denied/i','CRITICAL',
-    'Possible brute-force authentication attack',now(),'system'
-  );
-}
 function provisionOrganization(input){
   const t=now();
   return db.transaction(()=>{
