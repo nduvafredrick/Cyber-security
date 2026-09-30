@@ -16,6 +16,7 @@ test.before(async()=>{
   process.env.INGEST_API_KEY='api-test-ingest-key';
   process.env.INGEST_RATE_LIMIT_PER_MINUTE='300';
   process.env.BULK_INGEST_RATE_LIMIT_PER_MINUTE='60';
+  process.env.LOGIN_RATE_LIMIT_PER_15_MINUTES='100';
   process.env.ADMIN_USER='admin';
   process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
   for(const key of ['../config','../storage','../security','../server']){try{delete require.cache[require.resolve(key)]}catch{}}
