@@ -44,11 +44,11 @@ function migrateLegacy(){
 migrateLegacy();
 
 if(db.prepare('SELECT COUNT(*) count FROM users').get().count===0 && adminPasswordHash){
-  db.prepare('INSERT INTO users(organization_id,username,password_hash,role,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(DEFAULT_ORGANIZATION_ID,adminUser,adminPasswordHash,'admin',1,now(),now());
+  db.prepare('INSERT INTO users(organization_id,username,email,password_hash,role,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(DEFAULT_ORGANIZATION_ID,adminUser,null,adminPasswordHash,'admin',1,now(),now());
 }
 if(db.prepare('SELECT COUNT(*) count FROM ingest_keys').get().count===0 && ingestKey){
   const hash=crypto.createHash('sha256').update(ingestKey).digest('hex');
-  db.prepare('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(),DEFAULT_ORGANIZATION_ID,'bootstrap',hash,ingestKey.slice(0,8),1,now(),null,adminUser);
+  db.prepare('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,1,?,?,?)').run(crypto.randomUUID(),DEFAULT_ORGANIZATION_ID,'bootstrap',hash,ingestKey.slice(0,8),'Production',now(),null,adminUser);
 }
 function seedDefaultRule(organizationId){
   db.prepare('INSERT INTO detection_rules(organization_id,rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(organization_id,rule_key) DO NOTHING').run(
@@ -107,26 +107,26 @@ function getAudit(organizationId){
   requireOrganization(organizationId);
   return db.prepare('SELECT * FROM audit WHERE organization_id=? ORDER BY timestamp DESC LIMIT 100').all(organizationId);
 }
-function getUser(username){
-  return db.prepare('SELECT id,organization_id,username,password_hash,role,enabled,created_at,updated_at FROM users WHERE username=? AND enabled=1').get(username)||null;
+function getUser(identifier){
+  return db.prepare('SELECT id,organization_id,username,email,password_hash,role,enabled,created_at,updated_at FROM users WHERE (username=? OR email=?) AND enabled=1 ORDER BY id LIMIT 1').get(identifier,identifier)||null;
 }
 function listUsers(organizationId){
   requireOrganization(organizationId);
-  return db.prepare('SELECT id,organization_id,username,role,enabled,created_at,updated_at FROM users WHERE organization_id=? ORDER BY username').all(organizationId);
+  return db.prepare('SELECT id,organization_id,username,email,role,enabled,created_at,updated_at FROM users WHERE organization_id=? ORDER BY username').all(organizationId);
 }
 function addUser(user){
   requireOrganization(user.organization_id);
   const t=now();
-  return db.prepare('INSERT INTO users(organization_id,username,password_hash,role,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(user.organization_id,user.username,user.password_hash,user.role,1,t,t).lastInsertRowid;
+  return db.prepare('INSERT INTO users(organization_id,username,email,password_hash,role,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(user.organization_id,user.username,user.email||null,user.password_hash,user.role,1,t,t).lastInsertRowid;
 }
 function setUserEnabled(id,enabled,organizationId){
   requireOrganization(organizationId);
   db.prepare('UPDATE users SET enabled=?,updated_at=? WHERE id=? AND organization_id=?').run(enabled?1:0,now(),id,organizationId);
-  return db.prepare('SELECT id,organization_id,username,role,enabled,created_at,updated_at FROM users WHERE id=? AND organization_id=?').get(id,organizationId)||null;
+  return db.prepare('SELECT id,organization_id,username,email,role,enabled,created_at,updated_at FROM users WHERE id=? AND organization_id=?').get(id,organizationId)||null;
 }
 function getIngestKeys(organizationId){
   requireOrganization(organizationId);
-  return db.prepare('SELECT id,organization_id,name,key_prefix,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys WHERE organization_id=? ORDER BY created_at DESC').all(organizationId);
+  return db.prepare('SELECT id,organization_id,name,key_prefix,environment,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys WHERE organization_id=? ORDER BY created_at DESC').all(organizationId);
 }
 function verifyIngestKey(value){
   const hash=crypto.createHash('sha256').update(String(value||'')).digest('hex');
@@ -137,14 +137,14 @@ function verifyIngestKey(value){
 function createIngestKey(key){
   requireOrganization(key.organization_id);
   const t=now();
-  db.prepare('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,?,?,?)').run(key.id,key.organization_id,key.name,key.hash,key.raw.slice(0,8),1,t,null,key.created_by);
+  db.prepare('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,1,?,?,?)').run(key.id,key.organization_id,key.name,key.hash,key.raw.slice(0,8),key.environment||'Production',t,null,key.created_by);
   return {id:key.id,organization_id:key.organization_id,name:key.name,key_prefix:key.raw.slice(0,8),created_at:t};
 }
 function revokeIngestKey(id,organizationId){
   requireOrganization(organizationId);
   const t=now();
   db.prepare('UPDATE ingest_keys SET enabled=0,revoked_at=?,rotated_at=? WHERE id=? AND organization_id=?').run(t,t,id,organizationId);
-  return db.prepare('SELECT id,organization_id,name,key_prefix,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys WHERE id=? AND organization_id=?').get(id,organizationId)||null;
+  return db.prepare('SELECT id,organization_id,name,key_prefix,environment,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys WHERE id=? AND organization_id=?').get(id,organizationId)||null;
 }
 function listRules(organizationId){
   requireOrganization(organizationId);
@@ -189,8 +189,44 @@ function addAudit(a){
 }
 function createOrganization(organization){
   const t=now();
-  db.prepare('INSERT INTO organizations(id,name,slug,created_at,updated_at) VALUES (?,?,?,?,?)').run(organization.id,organization.name,organization.slug,t,t);
+  db.prepare('INSERT INTO organizations(id,name,slug,industry,company_size,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(
+    organization.id,organization.name,organization.slug,organization.industry||'Other',organization.company_size||'Unknown',t,t
+  );
   return db.prepare('SELECT * FROM organizations WHERE id=?').get(organization.id);
+}
+function getOrganization(organizationId){
+  requireOrganization(organizationId);
+  return db.prepare('SELECT * FROM organizations WHERE id=?').get(organizationId)||null;
+}
+function seedDefaultRule(organizationId){
+  db.prepare('INSERT INTO detection_rules(organization_id,rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(organization_id,rule_key) DO NOTHING').run(
+    organizationId,'auth-bruteforce-v1','Authentication brute force','Repeated failed authentication attempts from one source.',1,300000,5,
+    JSON.stringify(['HIGH','CRITICAL']),JSON.stringify(['ssh','login','authentication']),'/failed|invalid|denied/i','CRITICAL',
+    'Possible brute-force authentication attack',now(),'system'
+  );
+}
+function provisionOrganization(input){
+  const t=now();
+  return db.transaction(()=>{
+    db.prepare('INSERT INTO organizations(id,name,slug,industry,company_size,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(
+      input.id,input.name,input.slug,input.industry,input.company_size,t,t
+    );
+    const userId=db.prepare('INSERT INTO users(organization_id,username,email,password_hash,role,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(
+      input.id,input.email,input.email,input.password_hash,'admin',1,t,t
+    ).lastInsertRowid;
+    db.prepare('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,1,?,?,?)').run(
+      input.connector_id,input.id,input.connector_name,input.key_hash,input.key_raw.slice(0,8),input.environment,t,null,input.email
+    );
+    seedDefaultRule(input.id);
+    db.prepare('INSERT INTO audit(id,organization_id,timestamp,action,actor,target,status) VALUES (?,?,?,?,?,?,?)').run(
+      crypto.randomUUID(),input.id,t,'ORGANIZATION_CREATED',input.email,input.id,'ACTIVE'
+    );
+    return {
+      organization:db.prepare('SELECT * FROM organizations WHERE id=?').get(input.id),
+      user:db.prepare('SELECT id,organization_id,username,email,role,enabled,created_at,updated_at FROM users WHERE id=?').get(userId),
+      connector:{id:input.connector_id,name:input.connector_name,environment:input.environment,created_at:t}
+    };
+  })();
 }
 function health(){db.prepare('SELECT 1').get();return true}
 function close(){db.close()}
@@ -198,6 +234,9 @@ module.exports={
   db,
   DEFAULT_ORGANIZATION_ID,
   createOrganization,
+  createOrganizationWithAdmin:provisionOrganization,
+  provisionOrganization,
+  getOrganization,
   getEvents,
   getRecentEvents,
   getAlerts,
