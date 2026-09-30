@@ -24,7 +24,7 @@ function Badge({children}){return <span className={'badge '+String(children).toL
 function eventMatches(e,severity,search){const q=String(search||'').trim().toLowerCase();return(!severity||e.severity===severity)&&(!q||[e.message,e.category,e.source_ip,e.hostname].some(v=>String(v).toLowerCase().includes(q)))}
 
 function App(){
- const[token,setToken]=useState(false),[currentUser,setCurrentUser]=useState(null),[events,setEvents]=useState([]),[alerts,setAlerts]=useState([]),[stats,setStats]=useState({}),[view,setView]=useState('overview'),[searchInput,setSearchInput]=useState(''),[query,setQuery]=useState(''),[severity,setSeverity]=useState(''),[page,setPage]=useState(0),[loading,setLoading]=useState(false),[error,setError]=useState(''),[login,setLogin]=useState({username:'',password:''}),[connected,setConnected]=useState(false);
+ const[token,setToken]=useState(false),[currentUser,setCurrentUser]=useState(null),[organization,setOrganization]=useState(null),[events,setEvents]=useState([]),[alerts,setAlerts]=useState([]),[stats,setStats]=useState({}),[view,setView]=useState('overview'),[searchInput,setSearchInput]=useState(''),[query,setQuery]=useState(''),[severity,setSeverity]=useState(''),[page,setPage]=useState(0),[loading,setLoading]=useState(false),[error,setError]=useState(''),[login,setLogin]=useState({username:'',password:''}),[connected,setConnected]=useState(false);
  const ws=useRef(null),abort=useRef(null),filterRef=useRef({severity:'',search:''});
 
  useEffect(()=>{filterRef.current={severity,search:query}},[severity,query]);
@@ -45,7 +45,7 @@ function App(){
    }catch(e){if(e.name!=='AbortError'){if(e.status===401){setToken(false);setError('Your session has expired. Sign in again.')}else setError(e.message)}}finally{if(!c.signal.aborted)setLoading(false)}
  },[view,page,query,severity]);
 
- useEffect(()=>{api('/api/auth/me').then(d=>{setCurrentUser(d.user);setToken(true)}).catch(()=>{setCurrentUser(null);setToken(false)})},[]);
+ useEffect(()=>{api('/api/auth/me').then(d=>{setCurrentUser(d.user);setOrganization(d.organization||null);setToken(true)}).catch(()=>{setCurrentUser(null);setOrganization(null);setToken(false)})},[]);
  useEffect(()=>{if(token)load();return()=>abort.current?.abort()},[token,load]);
  useEffect(()=>{if(view!=='events')return;const t=setTimeout(()=>{setQuery(searchInput.trim());setPage(0)},350);return()=>clearTimeout(t)},[searchInput,view]);
  useEffect(()=>{if(!token)return;let stopped=false,retry=1000,timer;
@@ -63,15 +63,17 @@ function App(){
  const viewRef=useRef(view),pageRef=useRef(page);useEffect(()=>{viewRef.current=view;pageRef.current=page},[view,page]);
  useEffect(()=>{if(connected&&ws.current?.readyState===1)ws.current.send(JSON.stringify({type:'subscribe',...filterRef.current}))},[connected,query,severity]);
 
- async function signIn(e){e.preventDefault();setLoading(true);setError('');try{const session=await api('/api/auth/login',{method:'POST',body:JSON.stringify(login)});setCurrentUser(session.user);setToken(true);setLogin({username:'',password:''})}catch(e){setError(e.message)}finally{setLoading(false)}}
- async function signOut(){try{await api('/api/auth/logout',{method:'POST'})}catch{}setCurrentUser(null);setToken(false);ws.current?.close()}
+ async function signIn(e){e.preventDefault();setLoading(true);setError('');try{const session=await api('/api/auth/login',{method:'POST',body:JSON.stringify(login)});setCurrentUser(session.user);setOrganization(session.organization||null);setToken(true);setLogin({username:'',password:''})}catch(e){setError(e.message)}finally{setLoading(false)}}
+ async function signOut(){try{await api('/api/auth/logout',{method:'POST'})}catch{}setCurrentUser(null);setOrganization(null);setToken(false);ws.current?.close()}
  async function alertStatus(id,status){try{const d=await api('/api/alerts/'+id,{method:'PATCH',body:JSON.stringify({status})});setAlerts(x=>x.map(a=>a.id===id?d.alert:a));setStats(s=>({...s,openAlerts:d.alert.status==='NEW'?(s.openAlerts||0):Math.max(0,(s.openAlerts||0)-(d.alert.status!=='NEW'?1:0))}))}catch(e){setError(e.message)}}
  const pageCount=Math.max(1,Math.ceil((stats.eventSearchTotal??0)/PAGE_SIZE));
 
- if(!token)return <main className="auth"><form onSubmit={signIn} className="login"><div className="brand-mark">S</div><div><p className="eyebrow">SECURITY OPERATIONS</p><h1>Sentinel</h1><p className="muted">Security Information & Event Management</p></div><input autoComplete="username" placeholder="Username" value={login.username} onChange={e=>setLogin({...login,username:e.target.value})}/><input autoComplete="current-password" type="password" placeholder="Password" value={login.password} onChange={e=>setLogin({...login,password:e.target.value})}/><button disabled={loading}>{loading?'Signing in…':'Sign in to console'}</button>{error&&<p className="error">{error}</p>}</form></main>;
+ if(!token)return window.location.pathname==='/onboarding'
+   ?<Onboarding onComplete={({user,organization})=>{setCurrentUser(user);setOrganization(organization);setToken(true);window.history.replaceState({},'', '/')}}
+   :<main className="auth"><form onSubmit={signIn} className="login"><div className="brand-mark">S</div><div><p className="eyebrow">SECURITY OPERATIONS</p><h1>Sentinel</h1><p className="muted">Security Information & Event Management</p></div><label className="sr-only" htmlFor="login-username">Username or email</label><input id="login-username" autoComplete="username" placeholder="Username or email" value={login.username} onChange={e=>setLogin({...login,username:e.target.value})}/><label className="sr-only" htmlFor="login-password">Password</label><input id="login-password" autoComplete="current-password" type="password" placeholder="Password" value={login.password} onChange={e=>setLogin({...login,password:e.target.value})}/><button disabled={loading}>{loading?'Signing in…':'Sign in to console'}</button><a className="auth-link" href="/onboarding">Create a company workspace</a>{error&&<p className="error">{error}</p>}</form></main>;
 
  return <div className="shell"><aside><div className="logo"><span>S</span><div><strong>Sentinel</strong><small>SIEM CONSOLE</small></div></div><nav>{[['overview','Overview'],['events','Events'],['alerts','Alerts'],['audit','Audit Log'],...(currentUser?.role==='admin'?[['admin','Administration']]:[])].map(([id,label])=><button className={view===id?'active':''} onClick={()=>{setView(id);setPage(0)}} key={id}><i>{id==='overview'?'◈':id==='events'?'≡':id==='alerts'?'△':'⌁'}</i>{label}{id==='alerts'&&stats.openAlerts?<em>{stats.openAlerts}</em>:null}</button>)}</nav><div className="sidebar-foot"><span className="status-dot"/>{connected?'Live connection':'Reconnecting…'}<button className="signout" onClick={signOut}>Sign out</button></div></aside>
- <main className="content"><header><div><p className="eyebrow">SECURITY OPERATIONS CENTER</p><h1>{view==='overview'?'Overview':view==='events'?'Security Events':view==='alerts'?'Alert Queue':'Audit Log'}</h1></div><div className="live"><span className="status-dot"/>{connected?'LIVE':'OFFLINE'}</div></header>{error&&<div className="error notice">{error}<button onClick={()=>setError('')}>Dismiss</button></div>}
+ <main className="content"><header><div><p className="eyebrow">SECURITY OPERATIONS CENTER</p><h1>{view==='overview'?'Overview':view==='events'?'Security Events':view==='alerts'?'Alert Queue':'Audit Log'}</h1>{organization?.name&&<p className="org-context">{organization.name}</p>}</div><div className="live"><span className="status-dot"/>{connected?'LIVE':'OFFLINE'}</div></header>{error&&<div className="error notice">{error}<button onClick={()=>setError('')}>Dismiss</button></div>}
  {view==='overview'&&<><section className="metrics">{[['TOTAL EVENTS',stats.totalEvents||0,'events'],['OPEN ALERTS',stats.openAlerts||0,'alerts'],['CRITICAL',stats.criticalEvents||0,'critical'],['SOURCES',stats.sources||0,'sources']].map(x=><article className="metric" key={x[0]}><span>{x[0]}</span><strong>{x[1]}</strong><small>{x[2]==='alerts'?'requires attention':x[2]==='critical'?'critical severity':'monitored'}</small></article>)}</section><div className="grid"><section className="panel"><div className="panel-head"><div><h2>Live event stream</h2><p>Most recent security telemetry</p></div><button className="ghost" onClick={()=>{cache.clear();load()}} disabled={loading}>{loading?'Loading…':'Refresh'}</button></div><EventTable rows={events.slice(0,12)} loading={loading}/></section><section className="panel"><div className="panel-head"><div><h2>Active alerts</h2><p>Detection engine findings</p></div></div>{alerts.filter(a=>a.status==='NEW').slice(0,5).map(a=><AlertRow a={a} key={a.id} onStatus={alertStatus}/>)}{!alerts.some(a=>a.status==='NEW')&&<Empty text="No active alerts"/>}</section></div></>}
  {view==='events'&&<section className="panel"><div className="toolbar"><input aria-label="Search events" placeholder="Search message, IP, category, or hostname…" value={searchInput} onChange={e=>setSearchInput(e.target.value)}/><select aria-label="Filter severity" value={severity} onChange={e=>setSeverity(e.target.value)}><option value="">All severities</option>{['CRITICAL','HIGH','MEDIUM','LOW','INFO'].map(x=><option key={x}>{x}</option>)}</select></div><EventTable rows={events} loading={loading}/><Pagination page={page} pageCount={pageCount} total={stats.eventSearchTotal||0} onPage={setPage}/></section>}
  {view==='alerts'&&<section className="panel"><div className="panel-head"><div><h2>Alert queue</h2><p>Investigate and update detections</p></div><button className="ghost" onClick={()=>{cache.clear();load()}} disabled={loading}>Refresh</button></div>{alerts.map(a=><AlertRow a={a} key={a.id} onStatus={alertStatus}/>)}{!alerts.length&&<Empty text="No alerts"/>}</section>}
@@ -83,6 +85,65 @@ function Pagination({page,pageCount,total,onPage}){if(total<=PAGE_SIZE)return nu
 function Empty({text}){return <div className="empty">{text}</div>}
 function Audit(){const[a,setA]=useState([]),[loading,setLoading]=useState(true);useEffect(()=>{const c=new AbortController();api('/api/audit',{signal:c.signal}).then(d=>setA(d.audit||[])).catch(()=>{}).finally(()=>setLoading(false));return()=>c.abort()},[]);return <section className="panel"><div className="panel-head"><div><h2>Audit trail</h2><p>Administrative activity</p></div></div>{loading?<Empty text="Loading audit trail…"/>:<table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Target</th></tr></thead><tbody>{a.map(x=><tr key={x.id}><td>{new Date(x.timestamp).toLocaleString()}</td><td>{x.action}</td><td>{x.actor}</td><td className="mono">{x.target||'—'}</td></tr>)}</tbody></table>}</section>}
 createRoot(document.getElementById('root')).render(<App/>);
+
+
+function Onboarding({onComplete}){
+ const[step,setStep]=useState(1);
+ const[form,setForm]=useState({company_name:'',industry:'Technology',company_size:'11-50',admin_email:'',password:'',confirm_password:'',connector_name:'Production API',environment:'Production'});
+ const[result,setResult]=useState(null);
+ const[loading,setLoading]=useState(false);
+ const[error,setError]=useState('');
+ const[testSent,setTestSent]=useState(false);
+ const[showKey,setShowKey]=useState(false);
+ const industries=['Technology','Finance','Healthcare','Education','Retail','Manufacturing','Government','Non-profit','Other'];
+ const sizes=['1-10','11-50','51-200','201-500','501-1000','1000+'];
+ const environments=['Production','Staging','Development'];
+ function update(key,value){setForm(x=>({...x,[key]:value}));setError('')}
+ function goNext(e){
+   e.preventDefault();
+   if(step===1){
+     if(form.company_name.trim().length<2)return setError('Enter your company name.');
+     setStep(2);return;
+   }
+   if(form.admin_email.trim().length<5||!form.admin_email.includes('@'))return setError('Enter a valid administrator email.');
+   if(form.password.length<12)return setError('Use at least 12 characters for the administrator password.');
+   if(form.password!==form.confirm_password)return setError('Passwords do not match.');
+   setStep(3);
+ }
+ async function createWorkspace(e){
+   e.preventDefault();
+   setLoading(true);setError('');
+   try{
+     const data=await api('/api/onboarding',{method:'POST',body:JSON.stringify({
+       company_name:form.company_name.trim(),
+       industry:form.industry,
+       company_size:form.company_size,
+       admin_email:form.admin_email.trim(),
+       password:form.password,
+       connector_name:form.connector_name.trim(),
+       environment:form.environment
+     })});
+     setResult(data);setShowKey(false);
+   }catch(e){setError(e.message)}finally{setLoading(false)}
+ }
+ async function sendTestEvent(){
+   if(!result)return;
+   setLoading(true);setError('');
+   try{
+     const response=await fetch('/api/ingest/event',{
+       method:'POST',
+       headers:{'Content-Type':'application/json','x-api-key':result.connector.api_key},
+       credentials:'include',
+       body:JSON.stringify({severity:'INFO',category:'onboarding',message:'Sentinel onboarding test event',hostname:form.company_name.trim()})
+     });
+     const data=await response.json().catch(()=>({}));
+     if(!response.ok)throw Error(data.error||'The test event could not be sent');
+     cache.clear();setTestSent(true);
+   }catch(e){setError(e.message)}finally{setLoading(false)}
+ }
+ if(result)return <main className="onboarding"><div className="onboarding-shell"><header className="onboarding-brand"><div className="brand-mark">S</div><div><p className="eyebrow">SENTINEL SETUP</p><strong>Security Operations Platform</strong></div></header><div className="onboarding-card"><div className="success-mark">✓</div><p className="eyebrow">WORKSPACE CREATED</p><h1>{result.organization.name}</h1><p className="onboarding-lead">Your administrator account and first connector are ready.</p><div className="setup-summary"><div><span>Administrator</span><strong>{result.user.email}</strong></div><div><span>Connector</span><strong>{result.connector.name} · {result.connector.environment}</strong></div><div><span>Endpoint</span><code>{result.connector.endpoint}</code></div></div><div className="key-box"><div><span className="eyebrow">CONNECTOR CREDENTIAL</span><strong>{showKey?result.connector.api_key:'Hidden until you choose to reveal it'}</strong></div><button className="ghost" type="button" onClick={()=>setShowKey(v=>!v)}>{showKey?'Hide key':'Reveal key'}</button></div><p className="helper">Store this key securely. Sentinel will not show the plaintext credential again after you leave setup.</p><div className="onboarding-actions"><button type="button" className="secondary" onClick={sendTestEvent} disabled={loading||testSent}>{testSent?'Test event received':'Send a test event'}</button><button type="button" onClick={()=>onComplete(result)} disabled={!testSent}>Open Sentinel</button></div>{testSent&&<p className="success-text">Connected, event received, and detection services are active.</p>}{error&&<p className="error">{error}</p>}</div></div></main>;
+ return <main className="onboarding"><div className="onboarding-shell"><header className="onboarding-brand"><div className="brand-mark">S</div><div><p className="eyebrow">SENTINEL SETUP</p><strong>Security Operations Platform</strong></div></header><div className="onboarding-card"><div className="stepper">{[['01','Company'],['02','Administrator'],['03','Connector']].map(([number,label],index)=><div key={label} className={'step '+(step===index+1?'active':step>index+1?'done':'')}><span>{step>index+1?'✓':number}</span><strong>{label}</strong></div>)}</div>{step===1&&<form onSubmit={goNext}><p className="eyebrow">YOUR ORGANIZATION</p><h1>Create your Sentinel workspace</h1><p className="onboarding-lead">Set up the company that Sentinel will monitor. You can add more analysts and connectors after setup.</p><label>Company name<input autoFocus value={form.company_name} onChange={e=>update('company_name',e.target.value)} placeholder="Acme Industries" /></label><div className="form-grid"><label>Industry<select value={form.industry} onChange={e=>update('industry',e.target.value)}>{industries.map(x=><option key={x}>{x}</option>)}</select></label><label>Company size<select value={form.company_size} onChange={e=>update('company_size',e.target.value)}>{sizes.map(x=><option key={x}>{x}</option>)}</select></label></div><button type="submit">Continue to administrator</button>{error&&<p className="error">{error}</p>}</form>}{step===2&&<form onSubmit={goNext}><p className="eyebrow">PRIMARY ADMINISTRATOR</p><h1>Secure your workspace</h1><p className="onboarding-lead">This account will be the first organization administrator. You can invite analysts after signing in.</p><label>Work email<input autoFocus type="email" autoComplete="email" value={form.admin_email} onChange={e=>update('admin_email',e.target.value)} placeholder="you@company.com" /></label><label>Password<input type="password" autoComplete="new-password" value={form.password} onChange={e=>update('password',e.target.value)} placeholder="At least 12 characters" /></label><label>Confirm password<input type="password" autoComplete="new-password" value={form.confirm_password} onChange={e=>update('confirm_password',e.target.value)} placeholder="Repeat your password" /></label><div className="onboarding-actions"><button type="button" className="secondary" onClick={()=>setStep(1)}>Back</button><button type="submit">Continue to connector</button></div>{error&&<p className="error">{error}</p>}</form>}{step===3&&<form onSubmit={createWorkspace}><p className="eyebrow">FIRST CONNECTOR</p><h1>Connect your first source</h1><p className="onboarding-lead">Start with a generic API connector. You can add agents and cloud integrations later.</p><label>Connector name<input autoFocus value={form.connector_name} onChange={e=>update('connector_name',e.target.value)} placeholder="Production API" /></label><label>Environment<select value={form.environment} onChange={e=>update('environment',e.target.value)}>{environments.map(x=><option key={x}>{x}</option>)}</select></label><div className="connector-preview"><span>Endpoint</span><code>POST /api/ingest/event</code><span>Credential</span><code>Generated after workspace creation</code></div><div className="onboarding-actions"><button type="button" className="secondary" onClick={()=>setStep(2)}>Back</button><button type="submit" disabled={loading}>{loading?'Creating workspace…':'Create workspace'}</button></div>{error&&<p className="error">{error}</p>}</form>}</div><p className="onboarding-footer">Already have a workspace? <a href="/">Sign in</a></p></div></main>;
+}
 
 function Administration(){
  const[tab,setTab]=useState('users'),[users,setUsers]=useState([]),[keys,setKeys]=useState([]),[rules,setRules]=useState([]),[form,setForm]=useState({username:'',password:'',role:'analyst'}),[newKey,setNewKey]=useState(null),[message,setMessage]=useState('');
