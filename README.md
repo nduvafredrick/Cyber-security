@@ -186,12 +186,22 @@ This is a portfolio/demo SIEM, not a replacement for an enterprise SIEM or secur
 
 ## Roadmap
 
-1. Add scoped ingest keys per connector/source and connector health monitoring.
-2. Add event ingestion connectors and source health.
-3. Add charts, exports and investigation timelines.
-4. Evaluate PostgreSQL/OpenSearch/ClickHouse if deployment scale exceeds SQLite.
-5. Add charts, exports and investigation timelines.
-6. Evaluate PostgreSQL/OpenSearch/ClickHouse if deployment scale exceeds SQLite.
+The current release is a compact, working SIEM/SOC platform. The following items are the next steps toward a more production-capable security monitoring system:
+
+1. **More detection rules and use cases** — add coverage for account compromise, privilege escalation, suspicious process activity, malware indicators, web attacks, anomalous network behavior, and other common SOC use cases.
+2. **More log sources and collectors** — support additional Linux/Windows system logs, application logs, web servers, databases, cloud services, firewalls, and endpoint/security tools.
+3. **Reliable high-volume ingestion** — add batching, backpressure, queue-based ingestion, retry handling, connector health, rate controls, and performance testing for sustained event volumes.
+4. **Log normalization** — introduce a consistent event schema and parsing pipeline so events from different sources can be searched and correlated consistently.
+5. **Long-term retention and backups** — provide configurable retention tiers, scheduled backups, restore verification, archival, and storage monitoring.
+6. **Stronger protection against log tampering** — harden audit/event integrity with append-oriented controls, integrity verification, restricted deletion, and separated backup storage.
+7. **More sophisticated event correlation** — correlate activity across users, IPs, hosts, time windows, and multiple event types instead of relying primarily on single-rule patterns.
+8. **Incident and case management** — allow analysts to create incidents, attach alerts/evidence, assign ownership, track investigation status, record notes, and close cases with an audit trail.
+9. **Threat-intelligence integration** — support trusted IOC feeds and enrichment for IP addresses, domains, hashes, and other indicators, with source and freshness tracking.
+10. **Monitoring Sentinel itself** — add health and performance telemetry for ingestion, database usage, WebSocket connections, detection processing, storage, and connector availability.
+11. **Production database architecture** — evaluate PostgreSQL, OpenSearch, ClickHouse, or another event store when concurrency, event volume, retention, or deployment topology exceeds SQLite's practical limits.
+12. **Operational response process** — document alert triage, escalation, investigation, containment, recovery, evidence handling, and post-incident review procedures.
+13. **Scoped ingest keys and connector health** — issue separate credentials per source/connector, support scoped permissions, rotation/revocation, expiration, and source-level health status.
+14. **Investigation and reporting** — add dashboards, timelines, exports, saved searches, and analyst-friendly reporting.
 
 ## License
 
