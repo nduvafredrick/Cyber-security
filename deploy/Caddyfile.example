@@ -1,0 +1,9 @@
+# Example Caddy reverse proxy for Sentinel
+# Replace sentinel.example.com with your real DNS name.
+#
+# Caddy automatically obtains and renews a trusted TLS certificate when
+# the hostname resolves to this server and ports 80/443 are reachable.
+
+sentinel.example.com {
+    reverse_proxy 127.0.0.1:3001
+}
