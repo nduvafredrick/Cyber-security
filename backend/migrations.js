@@ -15,7 +15,7 @@ function sqliteMigrationV1(db){
     'CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, source_ip TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, count INTEGER NOT NULL, updated_at TEXT, updated_by TEXT, rule_key TEXT)',
     'CREATE INDEX IF NOT EXISTS idx_alerts_status_created ON alerts(status,created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_alerts_rule_status ON alerts(rule_key,status)',
-    'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN (\\'admin\\',\\'analyst\\')), enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN (\'admin\',\'analyst\')), enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
     'CREATE TABLE IF NOT EXISTS ingest_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, rotated_at TEXT, revoked_at TEXT, last_used_at TEXT, created_by TEXT NOT NULL)',
     'CREATE TABLE IF NOT EXISTS detection_rules (rule_key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, window_ms INTEGER NOT NULL, threshold INTEGER NOT NULL, severities TEXT NOT NULL, categories TEXT NOT NULL, message_pattern TEXT NOT NULL, alert_severity TEXT NOT NULL, title TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL)',
     'CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, target TEXT, status TEXT)',
@@ -30,7 +30,7 @@ function sqliteMigrationV2(db){
   db.pragma('foreign_keys = OFF');
   try{
     const migrate=db.transaction(()=>{
-      db.exec('CREATE TABLE users_new (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id TEXT NOT NULL REFERENCES organizations(id), username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN (\\'admin\\',\\'analyst\\')), enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)');
+      db.exec('CREATE TABLE users_new (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id TEXT NOT NULL REFERENCES organizations(id), username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN (\'admin\',\'analyst\')), enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)');
       db.prepare('INSERT INTO users_new(id,organization_id,username,password_hash,role,enabled,created_at,updated_at) SELECT id,?,username,password_hash,role,enabled,created_at,updated_at FROM users').run(DEFAULT_ORGANIZATION_ID);
       db.exec('DROP TABLE users');
       db.exec('ALTER TABLE users_new RENAME TO users');
@@ -104,7 +104,7 @@ async function postgresMigrationV1(q){
     'CREATE TABLE IF NOT EXISTS alerts(id TEXT PRIMARY KEY,created_at TIMESTAMPTZ NOT NULL,source_ip TEXT NOT NULL,severity TEXT NOT NULL,status TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,count INTEGER NOT NULL,updated_at TIMESTAMPTZ,updated_by TEXT,rule_key TEXT)',
     'CREATE INDEX IF NOT EXISTS idx_alerts_status_created ON alerts(status,created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_alerts_rule_status ON alerts(rule_key,status)',
-    'CREATE TABLE IF NOT EXISTS users(id SERIAL PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN (\\'admin\\',\\'analyst\\')),enabled BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ NOT NULL,updated_at TIMESTAMPTZ NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS users(id SERIAL PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN (\'admin\',\'analyst\')),enabled BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ NOT NULL,updated_at TIMESTAMPTZ NOT NULL)',
     'CREATE TABLE IF NOT EXISTS ingest_keys(id TEXT PRIMARY KEY,name TEXT NOT NULL,key_hash TEXT NOT NULL UNIQUE,key_prefix TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ NOT NULL,rotated_at TIMESTAMPTZ,revoked_at TIMESTAMPTZ,last_used_at TIMESTAMPTZ,created_by TEXT NOT NULL)',
     'CREATE TABLE IF NOT EXISTS detection_rules(rule_key TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT TRUE,window_ms BIGINT NOT NULL,threshold INTEGER NOT NULL,severities JSONB NOT NULL,categories JSONB NOT NULL,message_pattern TEXT NOT NULL,alert_severity TEXT NOT NULL,title TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL,updated_by TEXT NOT NULL)',
     'CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,timestamp TIMESTAMPTZ NOT NULL,action TEXT NOT NULL,actor TEXT NOT NULL,target TEXT,status TEXT)',
