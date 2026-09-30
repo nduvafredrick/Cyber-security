@@ -29,7 +29,7 @@ async function authenticatedUser(value){
   const session=verifyToken(value);
   const user=await store.getUser(session.username);
   if(!user)throw new Error('User disabled or removed');
-  return {id:user.id,organization_id:user.organization_id,username:user.username,role:user.role};
+  return {id:user.id,organization_id:user.organization_id,username:user.username,email:user.email||null,role:user.role};
 }
 function auth(req,res,next){
   try{
@@ -72,11 +72,11 @@ function login(username,password){
   const result=store.getUser(String(username||''));
   if(result&&typeof result.then==='function'){
     return result.then(user=>user&&bcrypt.compareSync(String(password||''),user.password_hash)
-      ?{id:user.id,organization_id:user.organization_id,username:user.username,role:user.role}
+      ?{id:user.id,organization_id:user.organization_id,username:user.username,email:user.email||null,role:user.role}
       :null);
   }
   if(!result||!bcrypt.compareSync(String(password||''),result.password_hash))return null;
-  return {id:result.id,organization_id:result.organization_id,username:result.username,role:result.role};
+  return {id:result.id,organization_id:result.organization_id,username:result.username,email:result.email||null,role:result.role};
 }
 function setSession(res,value){
   const secure=sessionCookieSecure?' Secure':'';
