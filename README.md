@@ -70,6 +70,7 @@ Required in production:
 
 - `JWT_SECRET` — at least 32 characters
 - `INGEST_API_KEY` — at least 20 characters
+- `METRICS_API_KEY` — at least 20 characters; required for production `/metrics` access via `X-Metrics-Key`
 - `ADMIN_PASSWORD_HASH` — bcrypt hash
 
 Optional:
@@ -131,6 +132,7 @@ Ingest keys are stored as SHA-256 hashes and the plaintext value is returned onl
 - `GET /api/audit`
 - `GET /health` — liveness
 - `GET /ready` — readiness/database check
+- `GET /metrics` — Prometheus metrics; in production send `X-Metrics-Key`
 - WebSocket: `/ws`
 
 ## Event storage
