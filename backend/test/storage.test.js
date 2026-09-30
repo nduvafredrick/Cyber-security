@@ -25,8 +25,8 @@ test('sqlite storage persists and queries events',()=>{
   const {store}=makeStore();
   const now=new Date().toISOString();
   store.addEvents([
-    {id:'t1',timestamp:now,severity:'HIGH',category:'ssh',source_ip:'10.0.0.1',message:'failed login',hostname:'host-a'},
-    {id:'t2',timestamp:now,severity:'INFO',category:'system',source_ip:'10.0.0.2',message:'boot',hostname:'host-b'}
+    {id:'t1',organization_id:store.DEFAULT_ORGANIZATION_ID,timestamp:now,severity:'HIGH',category:'ssh',source_ip:'10.0.0.1',message:'failed login',hostname:'host-a'},
+    {id:'t2',organization_id:store.DEFAULT_ORGANIZATION_ID,timestamp:now,severity:'INFO',category:'system',source_ip:'10.0.0.2',message:'boot',hostname:'host-b'}
   ]);
   const organizationId=store.DEFAULT_ORGANIZATION_ID;
   assert.equal(store.getEvents({organization_id:organizationId,search:'failed',limit:10,offset:0}).total,1);
