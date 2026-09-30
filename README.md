@@ -7,7 +7,7 @@ Sentinel is a compact Security Information & Event Management (SIEM) platform fo
 - React + Vite
 - Node.js + Express
 - SQLite (`better-sqlite3`) with indexed event storage
-- bcrypt + JWT-backed **HttpOnly cookie sessions**
+- bcrypt + JWT-backed **HttpOnly cookie sessions** with persistent users/roles
 - Authenticated WebSocket live telemetry
 - Docker / Docker Compose
 - GitHub Actions CI
@@ -32,7 +32,7 @@ backend/server.js         HTTP/WebSocket entry point
 backend/config.js         Runtime configuration + production validation
 backend/security.js       Cookie/JWT authentication + API-key middleware
 backend/storage.js        SQLite persistence, indexes and legacy migration
-backend/detection.js      Detection rules
+backend/detection.js      Rule-driven detection engine
 backend/logger.js         Structured JSON logging
 backend/test/             Automated backend tests
 Dockerfile                Production container
@@ -94,6 +94,8 @@ node -e "console.log(require('bcryptjs').hashSync('YOUR_PASSWORD', 12))"
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
 
+Users are stored in SQLite with bcrypt password hashes and either `admin` or `analyst` roles. The initial admin is bootstrapped from `ADMIN_USER` and `ADMIN_PASSWORD_HASH` on an empty database; subsequent users are managed through the admin API.
+
 Browser authentication uses the session cookie. API clients may also send an `Authorization: Bearer <JWT>` header where direct token authentication is appropriate.
 
 ### Events
@@ -101,6 +103,20 @@ Browser authentication uses the session cookie. API clients may also send an `Au
 - `GET /api/events` — supports `limit`, `offset`, `search`, `severity`, and `category`
 - `POST /api/ingest/event` with `x-api-key`
 - `POST /api/ingest/bulk` with `x-api-key`
+
+### Administration
+
+Admin-only endpoints:
+
+- `GET/POST /api/admin/users` — list/create users
+- `PATCH /api/admin/users/:id` — enable/disable a user
+- `GET /api/admin/ingest-keys` — list key metadata without secrets
+- `POST /api/admin/ingest-keys/rotate` — create a new key and revoke active keys
+- `DELETE /api/admin/ingest-keys/:id` — revoke a key
+- `GET /api/admin/detection-rules` — list persistent rules
+- `PUT /api/admin/detection-rules/:ruleKey` — validate and update a rule
+
+Ingest keys are stored as SHA-256 hashes and the plaintext value is returned only once during rotation.
 
 ### Monitoring
 
@@ -118,14 +134,21 @@ Events are stored in SQLite at `DATA_DIR/sentinel.db`. SQLite uses WAL mode and 
 
 ## Testing
 
-Run:
+Backend:
 
 ```bash
 cd backend
 npm test
 ```
 
-The automated suite covers SQLite storage/query behavior, authentication, detection, API ingestion, bulk ingestion, WebSocket authentication/live delivery, duplicate-alert suppression, and production environment validation. CI additionally builds the frontend, performs a dependency audit, builds the Docker image, and runs a container readiness smoke test.
+Frontend/browser:
+
+```bash
+cd frontend
+npm test
+```
+
+The automated suite covers SQLite storage/query behavior, persistent authentication and roles, configurable detection rules, ingest-key rotation, API ingestion, bulk ingestion, WebSocket authentication/live delivery, duplicate-alert suppression, and production environment validation. Playwright browser tests cover sign-in, dashboard rendering, navigation, event search, and severity filtering. CI also performs the frontend build, dependency audit, Docker build, container readiness smoke test, and browser UI tests.
 
 ## Docker deployment
 
@@ -163,10 +186,10 @@ This is a portfolio/demo SIEM, not a replacement for an enterprise SIEM or secur
 
 ## Roadmap
 
-1. Add configurable detection-rule management and persistent rule configuration.
-2. Add multiple users, roles, and administrative user management.
-3. Add scoped ingest keys with rotation/revocation and audit history.
-4. Add event ingestion connectors and source health.
+1. Add scoped ingest keys per connector/source and connector health monitoring.
+2. Add event ingestion connectors and source health.
+3. Add charts, exports and investigation timelines.
+4. Evaluate PostgreSQL/OpenSearch/ClickHouse if deployment scale exceeds SQLite.
 5. Add charts, exports and investigation timelines.
 6. Evaluate PostgreSQL/OpenSearch/ClickHouse if deployment scale exceeds SQLite.
 
