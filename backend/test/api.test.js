@@ -369,3 +369,76 @@ test('WebSocket live events stay inside the authenticated organization',async()=
   wsA.close();
   wsB.close();
 });
+
+test('company onboarding provisions an organization, admin, connector, session, and working ingest key',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const email='owner-'+Date.now()+'@example.com';
+  const response=await fetch(base+'/api/onboarding',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({
+      company_name:'Northstar Systems',
+      industry:'Technology',
+      company_size:'11-50',
+      admin_email:email,
+      password:'long-onboarding-password',
+      connector_name:'Production API',
+      environment:'Production'
+    })
+  });
+  assert.equal(response.status,201);
+  const data=await response.json();
+  assert.equal(data.organization.name,'Northstar Systems');
+  assert.equal(data.organization.industry,'Technology');
+  assert.equal(data.organization.company_size,'11-50');
+  assert.equal(data.user.email,email);
+  assert.equal(data.user.role,'admin');
+  assert.equal(data.connector.name,'Production API');
+  assert.equal(data.connector.environment,'Production');
+  assert.match(data.connector.api_key,/^sk_/);
+  assert.match(response.headers.get('set-cookie')||'','sentinel_session=');
+
+  const me=await fetch(base+'/api/auth/me',{headers:{cookie:response.headers.get('set-cookie')}});
+  assert.equal(me.status,200);
+  const meData=await me.json();
+  assert.equal(meData.user.organization_id,data.organization.id);
+
+  const ingest=await fetch(base+'/api/ingest/event',{
+    method:'POST',
+    headers:{'content-type':'application/json','x-api-key':data.connector.api_key},
+    body:JSON.stringify({severity:'INFO',category:'onboarding',message:'Sentinel onboarding test event',hostname:'northstar-test'})
+  });
+  assert.equal(ingest.status,201);
+
+  const events=await fetch(base+'/api/events?search=Sentinel%20onboarding%20test%20event&limit=10',{
+    headers:{authorization:'Bearer '+require('../security').token(data.user)}
+  });
+  assert.equal(events.status,200);
+  assert.equal((await events.json()).total,1);
+});
+
+test('company onboarding rejects duplicate administrator email and invalid company profile',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const email='duplicate-'+Date.now()+'@example.com';
+  const payload={
+    company_name:'Duplicate Test',
+    industry:'Technology',
+    company_size:'1-10',
+    admin_email:email,
+    password:'long-onboarding-password',
+    connector_name:'Production API',
+    environment:'Production'
+  };
+  const first=await fetch(base+'/api/onboarding',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+  assert.equal(first.status,201);
+  const duplicate=await fetch(base+'/api/onboarding',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload,company_name:'Another Company'})});
+  assert.equal(duplicate.status,400);
+  assert.match((await duplicate.json()).error,/already registered|exists/i);
+
+  const invalid=await fetch(base+'/api/onboarding',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({...payload,admin_email:'not-an-email',industry:'Not Real'})
+  });
+  assert.equal(invalid.status,400);
+});
