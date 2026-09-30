@@ -2,7 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('fs');
 const os=require('os');
-const path=require('path');
+const path=require('path');\nconst crypto=require('crypto');
 const bcrypt=require('bcryptjs');
 
 let server;
@@ -186,4 +186,93 @@ test('detection rule preserves regex flags for capitalized OpenSSH messages',asy
     if(i<2)assert.equal((await response.json()).alert,null);
     else assert.equal((await response.json()).alert?.severity,'CRITICAL');
   }
+});
+test('isolates events, alerts, rules, audit records, users, and ingest keys between organizations',async()=>{
+  const store=require('../storage');
+  const security=require('../security');
+  const base='http://127.0.0.1:'+server.address().port;
+  const suffix=Date.now().toString(36);
+  const organizationA=await store.createOrganization({id:'org-a-'+suffix,name:'Company A',slug:'company-a-'+suffix});
+  const organizationB=await store.createOrganization({id:'org-b-'+suffix,name:'Company B',slug:'company-b-'+suffix});
+  const passwordHash=bcrypt.hashSync('long-test-password-123',4);
+  const userAId=await store.addUser({username:'company-a-admin-'+suffix,password_hash:passwordHash,role:'admin',organization_id:organizationA.id});
+  const userBId=await store.addUser({username:'company-b-admin-'+suffix,password_hash:passwordHash,role:'admin',organization_id:organizationB.id});
+  const userA={id:userAId,username:'company-a-admin-'+suffix,role:'admin',organization_id:organizationA.id};
+  const userB={id:userBId,username:'company-b-admin-'+suffix,role:'admin',organization_id:organizationB.id};
+  const authA={authorization:'Bearer '+security.token(userA)};
+  const authB={authorization:'Bearer '+security.token(userB)};
+  const rawA=security.generateIngestKey();
+  const rawB=security.generateIngestKey();
+  const hash=(value)=>crypto.createHash('sha256').update(value).digest('hex');
+  const keyA=await store.createIngestKey({id:'key-a-'+suffix,name:'Company A connector',raw:rawA,hash:hash(rawA),created_by:userA.username,organization_id:organizationA.id});
+  const keyB=await store.createIngestKey({id:'key-b-'+suffix,name:'Company B connector',raw:rawB,hash:hash(rawB),created_by:userB.username,organization_id:organizationB.id});
+  assert.equal(keyA.organization_id,organizationA.id);
+  assert.equal(keyB.organization_id,organizationB.id);
+  const ruleB=await store.upsertRule({
+    rule_key:'company-b-rule',
+    name:'Company B rule',
+    description:'Tenant isolation test rule',
+    enabled:true,
+    window_ms:300000,
+    threshold:99,
+    severities:['HIGH'],
+    categories:['ssh'],
+    message_pattern:'/tenant-b/i',
+    alert_severity:'HIGH',
+    title:'Company B rule'
+  },userB.username,organizationB.id);
+  assert.equal(ruleB.organization_id,organizationB.id);
+  const eventA=await fetch(base+'/api/ingest/event',{
+    method:'POST',
+    headers:{'content-type':'application/json','x-api-key':rawA},
+    body:JSON.stringify({severity:'HIGH',category:'tenant-a',source_ip:'10.50.0.1',message:'tenant-a event',hostname:'company-a'})
+  });
+  const eventB=await fetch(base+'/api/ingest/event',{
+    method:'POST',
+    headers:{'content-type':'application/json','x-api-key':rawB},
+    body:JSON.stringify({severity:'HIGH',category:'tenant-b',source_ip:'10.60.0.1',message:'tenant-b event',hostname:'company-b'})
+  });
+  assert.equal(eventA.status,201);
+  assert.equal(eventB.status,201);
+
+  const eventsA=await fetch(base+'/api/events?limit=100',{headers:authA});
+  const eventsAData=await eventsA.json();
+  const eventsB=await fetch(base+'/api/events?limit=100',{headers:authB});
+  const eventsBData=await eventsB.json();
+  assert.equal(eventsAData.events.some(e=>e.message==='tenant-a event'),true);
+  assert.equal(eventsAData.events.some(e=>e.message==='tenant-b event'),false);
+  assert.equal(eventsBData.events.some(e=>e.message==='tenant-b event'),true);
+  assert.equal(eventsBData.events.some(e=>e.message==='tenant-a event'),false);
+
+  const rulesA=await fetch(base+'/api/admin/detection-rules',{headers:authA});
+  const rulesB=await fetch(base+'/api/admin/detection-rules',{headers:authB});
+  assert.equal((await rulesA.json()).rules.some(r=>r.rule_key==='company-b-rule'),false);
+  assert.equal((await rulesB.json()).rules.some(r=>r.rule_key==='company-b-rule'),true);
+
+  const alertsB=await fetch(base+'/api/alerts',{headers:authB});
+  const alertsBData=await alertsB.json();
+  const crossTenantAlert=alertsBData.alerts[0];
+  if(crossTenantAlert){
+    const denied=await fetch(base+'/api/alerts/'+crossTenantAlert.id,{
+      method:'PATCH',
+      headers:{...authA,'content-type':'application/json'},
+      body:JSON.stringify({status:'RESOLVED'})
+    });
+    assert.equal(denied.status,404);
+  }
+
+  const auditA=await fetch(base+'/api/audit',{headers:authA});
+  const auditB=await fetch(base+'/api/audit',{headers:authB});
+  assert.equal((await auditA.json()).audit.some(a=>a.actor===userB.username),false);
+  assert.equal((await auditB.json()).audit.some(a=>a.actor===userA.username),false);
+
+  const keysA=await fetch(base+'/api/admin/ingest-keys',{headers:authA});
+  const keysB=await fetch(base+'/api/admin/ingest-keys',{headers:authB});
+  assert.equal((await keysA.json()).keys.some(k=>k.id===keyB.id),false);
+  assert.equal((await keysB.json()).keys.some(k=>k.id===keyA.id),false);
+  const revokeCrossTenant=await fetch(base+'/api/admin/ingest-keys/'+keyB.id,{
+    method:'DELETE',
+    headers:authA
+  });
+  assert.equal(revokeCrossTenant.status,404);
 });
