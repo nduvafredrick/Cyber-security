@@ -6,12 +6,13 @@ const path=require('path');
 const bcrypt=require('bcryptjs');
 
 let server;
+let dataDir;
 
-test.before(async()=>{
-  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sentinel-rate-limit-'));
+async function startTestServer(){
+  dataDir=fs.mkdtempSync(path.join(os.tmpdir(),'sentinel-rate-limit-'));
   process.env.NODE_ENV='test';
   process.env.PORT='0';
-  process.env.DATA_DIR=dir;
+  process.env.DATA_DIR=dataDir;
   process.env.JWT_SECRET='rate-limit-test-secret';
   process.env.INGEST_API_KEY='rate-limit-test-ingest-key';
   process.env.ADMIN_USER='admin';
@@ -24,9 +25,10 @@ test.before(async()=>{
   const app=require('../server');
   server=app.startServer();
   await new Promise(resolve=>server.once('listening',resolve));
-});
+}
 
-test.after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));});
+test.beforeEach(async()=>{await startTestServer();});
+test.afterEach(async()=>{if(server)await new Promise(resolve=>server.close(resolve));server=null;});
 
 test('event ingestion returns 429 after the configured per-client limit',async()=>{
   const base='http://127.0.0.1:'+server.address().port;
@@ -50,7 +52,7 @@ test('bulk ingestion has a separate per-client limit',async()=>{
   }
   const limited=await fetch(base+'/api/ingest/bulk',{method:'POST',headers:{'content-type':'application/json','x-api-key':'rate-limit-test-ingest-key'},body});
   assert.equal(limited.status,429);
-  assert.match(limited.headers.get('retry-after')||'',/^\\d+$/);
+  assert.match(limited.headers.get('retry-after')||'',/^\d+$/);
   assert.equal((await limited.json()).error,'Bulk ingestion rate limit exceeded');
 });
 
