@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "test": "npx --yes playwright@1.55.0 test"
+    "test": "npm install --no-save --package-lock=false playwright@1.55.0 && npx playwright install --with-deps chromium && node --test test/ui.test.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
