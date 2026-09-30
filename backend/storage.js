@@ -16,7 +16,12 @@ const db=new Database(path.join(dataDir,'sentinel.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = '+dbBusyTimeoutMs);
-runSqliteMigrations(db);
+try{
+  runSqliteMigrations(db);
+}catch(error){
+  console.error('SQLite migration failed:',error);
+  throw error;
+}
 
 const now=()=>new Date().toISOString();
 
