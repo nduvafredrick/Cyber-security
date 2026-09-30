@@ -185,6 +185,21 @@ The production container runs non-root, drops Linux capabilities, enables `no-ne
 
 Put Sentinel behind HTTPS/reverse-proxy infrastructure for production use. A Caddy example is provided at `deploy/Caddyfile.example`; Caddy can terminate TLS and proxy both HTTP and WebSocket traffic to Sentinel.
 
+## Deploy to Render
+
+Sentinel can be deployed as a single Docker web service on Render using the repository's `render.yaml` Blueprint. The service includes a persistent disk mounted at `/app/backend/data`, so the SQLite database survives container restarts and deployments.
+
+1. In Render, create a new **Blueprint** from this repository.
+2. Render reads `render.yaml` and creates the Sentinel web service and persistent disk.
+3. Set the required `ADMIN_PASSWORD_HASH` secret when Render prompts for it. Generate it locally with the bcrypt command shown above.
+4. Deploy the Blueprint and wait for the `/ready` health check to pass.
+5. Open the generated HTTPS service URL. HTTPS is required because production sessions use Secure cookies and HSTS.
+6. Use the generated ingest/metrics secrets from Render for your connectors and monitoring system.
+
+The deployment serves the built React console and the Express/WebSocket backend from the same origin, so no separate frontend hosting or CORS configuration is required for the console.
+
+For production data protection, configure backups outside the Render persistent disk as well; a backup stored on the same disk does not protect against disk loss. Render deployment does not replace an off-site backup strategy.
+
 ## CI
 
 GitHub Actions verifies backend installation and tests, the frontend production build, high-severity dependency audit, Docker image build, and Docker readiness smoke testing. The workflow runs on pushes, pull requests, or manually through GitHub Actions.
