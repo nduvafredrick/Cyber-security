@@ -142,6 +142,9 @@ test('admin can create an analyst and manage rotatable ingest keys',async()=>{
   const key=(await rotated.json()).key;
   const ingest=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':key},body:JSON.stringify({severity:'INFO',category:'system',source_ip:'10.1.1.30',message:'rotated key works'})});
   assert.equal(ingest.status,201);
+  const keys=await fetch(base+'/api/admin/ingest-keys',{headers:{cookie}});
+  const record=(await keys.json()).keys.find(x=>x.name==='ci-rotated');
+  assert.ok(record?.last_used_at);
 });
 
 test('analyst sessions cannot change alert status',async()=>{
