@@ -60,6 +60,11 @@ jobs:
           done
           curl -fsS http://127.0.0.1:3002/ >/tmp/sentinel-index.html
           grep -q 'Sentinel — Security Operations' /tmp/sentinel-index.html
+          grep -oE '(src|href)="[^"]+"' /tmp/sentinel-index.html | cut -d'"' -f2 | while read -r asset; do
+            case "$asset" in
+              /assets/*) curl -fsS -o /dev/null -w "ASSET $asset -> %{http_code} %{content_type}\n" "http://127.0.0.1:3002$asset" ;;
+            esac
+          done
           curl -fsSI http://127.0.0.1:3002/ | tee /tmp/sentinel-headers.txt
           cd frontend
           npm install --no-save --package-lock=false playwright@1.55.0
