@@ -48,6 +48,13 @@ function normalize(input){
   return {id:Date.now()+'-'+crypto.randomBytes(4).toString('hex'),timestamp:new Date(timestamp).toISOString(),severity,category:text(input.category||'general',100),source_ip:ip,message:text(input.message||'Event received',1000),hostname:text(input.hostname||'unknown',255)};
 }
 const clients=new Set();
+function heartbeatClients(){
+  for(const ws of clients){
+    if(ws.isAlive===false){ws.terminate();clients.delete(ws);continue}
+    ws.isAlive=false;
+    try{ws.ping()}catch{ws.terminate();clients.delete(ws)}
+  }
+}
 const metrics={requests:0,errors:0,events_ingested:0,alerts_created:0};
 function matches(event,filter={}){const q=String(filter.search||'').trim().toLowerCase();return(!filter.severity||event.severity===filter.severity)&&(!q||event.message.toLowerCase().includes(q)||event.category.toLowerCase().includes(q)||event.source_ip.toLowerCase().includes(q)||event.hostname.toLowerCase().includes(q))}
 function broadcast(payload,filterable=false,organizationId){for(const ws of clients){if(ws.readyState!==1||ws.organization_id!==organizationId)continue;if(filterable&&payload.type==='event'&&!matches(payload.event,ws.filter))continue;try{ws.send(JSON.stringify(payload))}catch{ws.terminate();clients.delete(ws)}}}
@@ -139,12 +146,14 @@ app.get('*',(_q,r)=>r.sendFile(path.join(__dirname,'..','frontend','dist','index
 app.use((err,req,res,_next)=>{if(res.headersSent)return;const status=err.message==='Origin not allowed'?403:500;logger.error('request_failed',{request_id:req.requestId,error:err.message,status});res.status(status).json({error:status===403?'Origin not allowed':'Internal server error',request_id:req.requestId})});
 const wss=new WebSocketServer({noServer:true});let server;
 function attachWebSocket(){server.on('upgrade',async(req,socket,head)=>{if(!req.url.startsWith('/ws'))return socket.destroy();const session=security.readCookie(req,security.COOKIE_NAME);try{req.user=await security.authenticatedUser(session)}catch{socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');return socket.destroy()}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req))})}
-wss.on('connection',(ws,req)=>{ws.organization_id=req.user.organization_id;ws.filter={};clients.add(ws);ws.on('message',raw=>{try{const msg=JSON.parse(raw.toString());if(msg.type==='subscribe')ws.filter={severity:['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(msg.severity)?msg.severity:'',search:String(msg.search||'').slice(0,100)}}catch{}});ws.on('close',()=>clients.delete(ws));ws.on('error',()=>{clients.delete(ws);ws.terminate()})});
-function startServer(){server=app.listen(config.port,()=>logger.info('server_started',{port:config.port,env:config.env,instance:config.instanceId}));attachWebSocket();return server}
+wss.on('connection',(ws,req)=>{ws.organization_id=req.user.organization_id;ws.isAlive=true;ws.on('pong',()=>{ws.isAlive=true});ws.filter={};clients.add(ws);ws.on('message',raw=>{try{const msg=JSON.parse(raw.toString());if(msg.type==='subscribe')ws.filter={severity:['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(msg.severity)?msg.severity:'',search:String(msg.search||'').slice(0,100)}}catch{}});ws.on('close',()=>clients.delete(ws));ws.on('error',()=>{clients.delete(ws);ws.terminate()})});
+function startServer(){server=app.listen(config.port,()=>logger.info('server_started',{port:config.port,env:config.env,instance:config.instanceId}));attachWebSocket();heartbeatTimer=setInterval(heartbeatClients,30000);heartbeatTimer.unref();return server}
+let heartbeatTimer;
 let shuttingDown=false;
 function shutdown(signal){
   if(shuttingDown)return;
   shuttingDown=true;
+  if(heartbeatTimer)clearInterval(heartbeatTimer);
   logger.info('server_shutdown_started',{signal});
   for(const ws of clients)ws.close(1001,'Server shutting down');
   wss.close();
@@ -155,4 +164,6 @@ function shutdown(signal){
 if(require.main===module)startServer();
 process.on('SIGTERM',()=>shutdown('SIGTERM'));
 process.on('SIGINT',()=>shutdown('SIGINT'));
-module.exports={app,startServer,normalize,processEvent};
+process.on('uncaughtException',err=>{logger.error('uncaught_exception',{error:err?.stack||String(err)});shutdown('uncaughtException')});
+process.on('unhandledRejection',reason=>{logger.error('unhandled_rejection',{error:reason?.stack||String(reason)});shutdown('unhandledRejection')});
+module.exports={app,startServer,normalize,processEvent,heartbeatClients};
