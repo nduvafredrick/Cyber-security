@@ -28,9 +28,10 @@ test('sqlite storage persists and queries events',()=>{
     {id:'t1',timestamp:now,severity:'HIGH',category:'ssh',source_ip:'10.0.0.1',message:'failed login',hostname:'host-a'},
     {id:'t2',timestamp:now,severity:'INFO',category:'system',source_ip:'10.0.0.2',message:'boot',hostname:'host-b'}
   ]);
-  assert.equal(store.getEvents({search:'failed',limit:10,offset:0}).total,1);
-  assert.equal(store.getEvents({severity:'INFO',limit:10,offset:0}).events[0].id,'t2');
-  assert.equal(store.getStats().totalEvents,2);
+  const organizationId=store.DEFAULT_ORGANIZATION_ID;
+  assert.equal(store.getEvents({organization_id:organizationId,search:'failed',limit:10,offset:0}).total,1);
+  assert.equal(store.getEvents({organization_id:organizationId,severity:'INFO',limit:10,offset:0}).events[0].id,'t2');
+  assert.equal(store.getStats(organizationId).totalEvents,2);
   store.db.close();
 });
 
