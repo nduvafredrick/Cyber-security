@@ -125,4 +125,5 @@ function addAlert(a){db.prepare('INSERT OR REPLACE INTO alerts(id,created_at,sou
 function updateAlert(id,status,user){const a=db.prepare('SELECT * FROM alerts WHERE id=?').get(id);if(!a)return null;db.prepare('UPDATE alerts SET status=?,updated_at=?,updated_by=? WHERE id=?').run(status,new Date().toISOString(),user,id);return db.prepare('SELECT * FROM alerts WHERE id=?').get(id)}
 function addAudit(a){db.prepare('INSERT OR REPLACE INTO audit(id,timestamp,action,actor,target,status) VALUES (@id,@timestamp,@action,@actor,@target,@status)').run({...a,target:a.target||null,status:a.status||null})}
 function health(){db.prepare('SELECT 1').get();return true}
-module.exports={db,getEvents,getRecentEvents,getAlerts,getActiveAlert,getAudit,getStats,addEvents,addAlert,updateAlert,addAudit,prune,health,getUser,listUsers,addUser,setUserEnabled,getIngestKeys,verifyIngestKey,createIngestKey,revokeIngestKey,listRules,getRules,upsertRule};
+function close(){db.close()}
+module.exports={db,getEvents,getRecentEvents,getAlerts,getActiveAlert,getAudit,getStats,addEvents,addAlert,updateAlert,addAudit,prune,health,getUser,listUsers,addUser,setUserEnabled,getIngestKeys,verifyIngestKey,createIngestKey,revokeIngestKey,listRules,getRules,upsertRule,close};
