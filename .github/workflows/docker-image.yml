@@ -57,7 +57,7 @@ jobs:
           cat > /tmp/sentinel-playwright.config.js <<'EOF'
           module.exports={testDir:process.cwd()+'/test',timeout:30000,use:{browserName:'chromium',baseURL:'http://127.0.0.1:3002',headless:true}}
           EOF
-          npx --yes @playwright/test@1.55.0 test --config=/tmp/sentinel-playwright.config.js
+          npx --yes playwright@1.55.0 test --config=/tmp/sentinel-playwright.config.js
       - name: Stop smoke test container
         if: always()
         run: docker rm -f sentinel-ci || true
