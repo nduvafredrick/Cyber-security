@@ -76,6 +76,17 @@ jobs:
           npm install --no-save --package-lock=false playwright@1.55.0
           npx playwright install --with-deps chromium
           node --test test/ui.test.js
+      - name: Browser container diagnostics
+        if: always()
+        run: |
+          echo '--- browser container status ---'
+          docker ps -a --filter name=sentinel-browser
+          echo '--- browser container logs ---'
+          docker logs sentinel-browser 2>&1 | tail -n 300 || true
+          echo '--- direct asset request with browser-like headers ---'
+          curl -sS -D - -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36' -H 'Accept: text/css,*/*;q=0.1' http://127.0.0.1:3002/assets/index-C7lXE_ga.css -o /tmp/browser-css.out || true
+          head -c 500 /tmp/browser-css.out 2>/dev/null || true
+
       - name: Stop smoke test container
         if: always()
         run: docker rm -f sentinel-ci || true
