@@ -62,7 +62,7 @@ npm run dev
 
 Open `http://localhost:5173`.
 
-For local HTTP development, the `Secure` cookie attribute may require HTTPS depending on the browser. Production deployment should always use HTTPS.
+In development/test, the session cookie is not marked `Secure`, so `http://localhost` and local LAN development can authenticate normally. In production, the cookie is marked `Secure` and the application should be served behind HTTPS.
 
 ## Configuration
 
@@ -125,7 +125,7 @@ cd backend
 npm test
 ```
 
-The automated suite covers SQLite storage/query behavior and production environment validation. CI additionally builds the frontend, performs a dependency audit, builds the Docker image, and runs a container readiness smoke test.
+The automated suite covers SQLite storage/query behavior, authentication, detection, API ingestion, bulk ingestion, WebSocket authentication/live delivery, duplicate-alert suppression, and production environment validation. CI additionally builds the frontend, performs a dependency audit, builds the Docker image, and runs a container readiness smoke test.
 
 ## Docker deployment
 
@@ -137,7 +137,7 @@ docker compose up -d --build
 
 The production container runs non-root, drops Linux capabilities, enables `no-new-privileges`, uses a read-only root filesystem with a persistent data volume, has resource limits, and exposes a health check against `/ready`.
 
-Put Sentinel behind HTTPS/reverse-proxy infrastructure for production use.
+Put Sentinel behind HTTPS/reverse-proxy infrastructure for production use. A Caddy example is provided at `deploy/Caddyfile.example`; Caddy can terminate TLS and proxy both HTTP and WebSocket traffic to Sentinel.
 
 ## CI
 
@@ -163,10 +163,10 @@ This is a portfolio/demo SIEM, not a replacement for an enterprise SIEM or secur
 
 ## Roadmap
 
-1. Add configurable detection-rule management.
-2. Add event ingestion connectors and source health.
-3. Expand automated API/auth/detection integration tests.
-4. Add role-based users and API-key rotation.
+1. Add configurable detection-rule management and persistent rule configuration.
+2. Add multiple users, roles, and administrative user management.
+3. Add scoped ingest keys with rotation/revocation and audit history.
+4. Add event ingestion connectors and source health.
 5. Add charts, exports and investigation timelines.
 6. Evaluate PostgreSQL/OpenSearch/ClickHouse if deployment scale exceeds SQLite.
 
