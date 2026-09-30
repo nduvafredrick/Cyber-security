@@ -70,7 +70,7 @@ if(db.prepare('SELECT COUNT(*) count FROM users').get().count===0 && adminPasswo
 }
 if(db.prepare('SELECT COUNT(*) count FROM ingest_keys').get().count===0 && ingestKey){
   const hash=require('crypto').createHash('sha256').update(ingestKey).digest('hex');
-  db.prepare('INSERT INTO ingest_keys(id,name,key_hash,key_prefix,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,?,?)').run(require('crypto').randomUUID(),'bootstrap',hash,ingestKey.slice(0,8),1,now(),adminUser);
+  db.prepare('INSERT INTO ingest_keys(id,name,key_hash,key_prefix,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,?,?)').run(require('crypto').randomUUID(),'bootstrap',hash,ingestKey.slice(0,8),1,now(),null,adminUser);
 }
 if(db.prepare('SELECT COUNT(*) count FROM detection_rules').get().count===0){
   db.prepare('INSERT INTO detection_rules(rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run('auth-bruteforce-v1','Authentication brute force','Repeated failed authentication attempts from one source.',1,300000,5,JSON.stringify(['HIGH','CRITICAL']),JSON.stringify(['ssh','login','authentication']),'/failed|invalid|denied/i','CRITICAL','Possible brute-force authentication attack',now(),'system');
@@ -108,8 +108,8 @@ function listUsers(){return db.prepare('SELECT id,username,role,enabled,created_
 function addUser(user){const t=now();return db.prepare('INSERT INTO users(username,password_hash,role,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?)').run(user.username,user.password_hash,user.role,1,t,t).lastInsertRowid}
 function setUserEnabled(id,enabled){db.prepare('UPDATE users SET enabled=?,updated_at=? WHERE id=?').run(enabled?1:0,now(),id);return db.prepare('SELECT id,username,role,enabled,created_at,updated_at FROM users WHERE id=?').get(id)||null}
 function getIngestKeys(){return db.prepare('SELECT id,name,key_prefix,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys ORDER BY created_at DESC').all()}
-function verifyIngestKey(value){const crypto=require('crypto');const hash=crypto.createHash('sha256').update(String(value||'')).digest('hex');return db.prepare('undefined').get(hash)||null}
-function createIngestKey(key){const t=now();db.prepare('INSERT INTO ingest_keys(id,name,key_hash,key_prefix,enabled,created_at,created_by) VALUES (?,?,?,?,?,?,?)').run(key.id,key.name,key.hash,key.raw.slice(0,8),1,t,null,key.created_by);return {id:key.id,name:key.name,key_prefix:key.raw.slice(0,8),created_at:t}}
+function verifyIngestKey(value){const crypto=require('crypto');const hash=crypto.createHash('sha256').update(String(value||'')).digest('hex');const key=db.prepare('SELECT id,name,key_prefix FROM ingest_keys WHERE key_hash=? AND enabled=1 AND revoked_at IS NULL').get(hash)||null;if(key)db.prepare('UPDATE ingest_keys SET last_used_at=? WHERE id=?').run(now(),key.id);return key}
+function createIngestKey(key){const t=now();db.prepare('INSERT INTO ingest_keys(id,name,key_hash,key_prefix,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,?,?)').run(key.id,key.name,key.hash,key.raw.slice(0,8),1,t,null,key.created_by);return {id:key.id,name:key.name,key_prefix:key.raw.slice(0,8),created_at:t}}
 function revokeIngestKey(id,user){const t=now();db.prepare('UPDATE ingest_keys SET enabled=0,revoked_at=?,rotated_at=? WHERE id=?').run(t,t,id);return db.prepare('SELECT id,name,key_prefix,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys WHERE id=?').get(id)||null}
 function listRules(){return db.prepare('SELECT * FROM detection_rules ORDER BY rule_key').all().map(deserializeRule)}
 function deserializeRule(r){return {...r,enabled:Boolean(r.enabled),severities:JSON.parse(r.severities),categories:JSON.parse(r.categories)}}
