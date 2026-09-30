@@ -1,0 +1,2 @@
+function write(level,message,fields={}){process.stdout.write(JSON.stringify({timestamp:new Date().toISOString(),level,service:'sentinel-siem',message,...fields})+'\n');}
+module.exports={debug:(m,f)=>write('debug',m,f),info:(m,f)=>write('info',m,f),warn:(m,f)=>write('warn',m,f),error:(m,f)=>write('error',m,f)};
