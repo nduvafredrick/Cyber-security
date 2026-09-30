@@ -15,6 +15,7 @@ const config={
   env,
   port,
   dataDir,
+  databaseUrl:process.env.DATABASE_URL||null,
   jwtSecret:process.env.JWT_SECRET||'local-development-secret',
   ingestKey:process.env.INGEST_API_KEY||'local-development-ingest-key',
   metricsApiKey:process.env.METRICS_API_KEY||null,
