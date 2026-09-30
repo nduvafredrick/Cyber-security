@@ -10,10 +10,10 @@ async function login(page){
   const errors=[];
   page.on('console',msg=>{if(msg.type()==='error')errors.push('console: '+msg.text())});
   page.on('pageerror',err=>errors.push('pageerror: '+err.message));
-  const response=await page.goto('http://127.0.0.1:3002/',{waitUntil:'networkidle'});
+  const response=await page.goto('http://127.0.0.1:3002/',{waitUntil:'domcontentloaded'});
   assert.ok(response,'UI page did not return a response');
   assert.equal(response.status(),200);
-  await page.waitForTimeout(500);
+  await page.locator('#root > *').first().waitFor({timeout:10000}).catch(()=>{});
   const rootChildren=await page.locator('#root').locator('> *').count();
   if(rootChildren===0){
     const body=await page.locator('body').innerText().catch(()=> '');
@@ -30,10 +30,10 @@ async function login(page){
 test('Sentinel console signs in and renders the SOC dashboard',async()=>{
   const page=await browser.newPage();
   await login(page);
-  assert.equal(await page.getByRole('heading',{name:'Overview'}).isVisible(),true);
-  assert.equal(await page.getByText('SECURITY OPERATIONS CENTER').isVisible(),true);
-  assert.equal(await page.getByRole('button',{name:'Events'}).isVisible(),true);
-  assert.equal(await page.getByRole('button',{name:'Alerts'}).isVisible(),true);
+  await page.getByRole('heading',{name:'Overview'}).waitFor({state:'visible',timeout:10000});
+  await page.getByText('SECURITY OPERATIONS CENTER').waitFor({state:'visible',timeout:10000});
+  await page.getByRole('button',{name:'Events'}).waitFor({state:'visible',timeout:10000});
+  await page.getByRole('button',{name:'Alerts'}).waitFor({state:'visible',timeout:10000});
   await page.close();
 });
 
@@ -41,7 +41,7 @@ test('Events view supports search and severity filtering',async()=>{
   const page=await browser.newPage();
   await login(page);
   await page.getByRole('button',{name:'Events'}).click();
-  assert.equal(await page.getByRole('heading',{name:'Security Events'}).isVisible(),true);
+  await page.getByRole('heading',{name:'Security Events'}).waitFor({state:'visible',timeout:10000});
   await page.getByLabel('Search events').fill('browser-test');
   await page.getByLabel('Filter severity').selectOption('HIGH');
   assert.equal(await page.getByLabel('Search events').inputValue(),'browser-test');
