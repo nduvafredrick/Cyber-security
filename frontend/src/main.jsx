@@ -38,8 +38,7 @@ function App(){
        setEvents(e.events||[]);setStats(s=>({...s,eventSearchTotal:e.total??0}));
      }else if(view==='overview'){
        const[e,a,s]=await Promise.all([api('/api/events?limit=12&offset=0'),api('/api/alerts'),api('/api/stats/summary')]);
-       setEvents(e.events||[]);setAlerts(a.alerts||[]);setStats(s=>({...s,...s,...s,eventSearchTotal:e.total??s.totalEvents??0,...s}));
-       setStats({...s,eventSearchTotal:e.total??s.totalEvents??0});
+       setEvents(e.events||[]);setAlerts(a.alerts||[]);setStats({...s,eventSearchTotal:e.total??s.totalEvents??0});
      }else if(view==='alerts'){
        const[a,s]=await Promise.all([api('/api/alerts'),api('/api/stats/summary')]);setAlerts(a.alerts||[]);setStats(s);
      }
@@ -66,7 +65,7 @@ function App(){
 
  async function signIn(e){e.preventDefault();setLoading(true);setError('');try{await api('/api/auth/login',{method:'POST',body:JSON.stringify(login)});setToken(true);setLogin({username:'',password:''})}catch(e){setError(e.message)}finally{setLoading(false)}}
  async function signOut(){try{await api('/api/auth/logout',{method:'POST'})}catch{}setToken(false);ws.current?.close()}
- async function alertStatus(id,status){try{const d=await api('/api/alerts/'+id,{method:'PATCH',body:JSON.stringify({status})});setAlerts(x=>x.map(a=>a.id===id?d.alert:a));setStats(s=>({...s,openAlerts:d.alert.status==='NEW'?s.openAlerts||0:Math.max(0,(s.openAlerts||0)-(status!=='NEW'?1:0))}))}catch(e){setError(e.message)}}
+ async function alertStatus(id,status){try{const d=await api('/api/alerts/'+id,{method:'PATCH',body:JSON.stringify({status})});setAlerts(x=>x.map(a=>a.id===id?d.alert:a));setStats(s=>({...s,openAlerts:d.alert.status==='NEW'?(s.openAlerts||0):Math.max(0,(s.openAlerts||0)-(d.alert.status!=='NEW'?1:0))}))}catch(e){setError(e.message)}}
  const pageCount=Math.max(1,Math.ceil((stats.eventSearchTotal??0)/PAGE_SIZE));
 
  if(!token)return <main className="auth"><form onSubmit={signIn} className="login"><div className="brand-mark">S</div><div><p className="eyebrow">SECURITY OPERATIONS</p><h1>Sentinel</h1><p className="muted">Security Information & Event Management</p></div><input autoComplete="username" placeholder="Username" value={login.username} onChange={e=>setLogin({...login,username:e.target.value})}/><input autoComplete="current-password" type="password" placeholder="Password" value={login.password} onChange={e=>setLogin({...login,password:e.target.value})}/><button disabled={loading}>{loading?'Signing in…':'Sign in to console'}</button>{error&&<p className="error">{error}</p>}</form></main>;
