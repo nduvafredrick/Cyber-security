@@ -56,9 +56,26 @@ test('production environment validation rejects weak secrets',()=>{
   process.env.DATA_DIR=dir;
   process.env.JWT_SECRET='short';
   process.env.INGEST_API_KEY='short';
+  process.env.METRICS_API_KEY='valid-metrics-key-0123456789';
   process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
   delete require.cache[require.resolve('../config')];
   assert.throws(()=>require('../config'),/at least 32 characters/);
+  process.env.NODE_ENV='test';
+});
+
+test('production environment validation rejects missing or weak metrics key',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sentinel-'));
+  process.env.NODE_ENV='production';
+  process.env.DATA_DIR=dir;
+  process.env.JWT_SECRET='this-is-a-valid-jwt-secret-0123456789';
+  process.env.INGEST_API_KEY='valid-ingest-key-0123456789';
+  process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
+  delete process.env.METRICS_API_KEY;
+  delete require.cache[require.resolve('../config')];
+  assert.throws(()=>require('../config'),/Missing required environment variable: METRICS_API_KEY/);
+  process.env.METRICS_API_KEY='short';
+  delete require.cache[require.resolve('../config')];
+  assert.throws(()=>require('../config'),/METRICS_API_KEY must be at least 20 characters/);
   process.env.NODE_ENV='test';
 });
 
