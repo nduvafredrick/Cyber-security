@@ -120,6 +120,7 @@ async function postgresMigrationV2(q){
     await q('ALTER TABLE '+table+' ADD COLUMN IF NOT EXISTS organization_id TEXT');
     await q('UPDATE '+table+' SET organization_id=$1 WHERE organization_id IS NULL',[DEFAULT_ORGANIZATION_ID]);
     await q('ALTER TABLE '+table+' ALTER COLUMN organization_id SET NOT NULL');
+    await q('ALTER TABLE '+table+' DROP CONSTRAINT IF EXISTS '+table+'_organization_id_fkey');
     await q('ALTER TABLE '+table+' ADD CONSTRAINT '+table+'_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES organizations(id)');
   }
 
