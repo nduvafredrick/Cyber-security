@@ -60,6 +60,7 @@ jobs:
           done
           curl -fsS http://127.0.0.1:3002/ >/tmp/sentinel-index.html
           grep -q 'Sentinel — Security Operations' /tmp/sentinel-index.html
+          curl -fsSI http://127.0.0.1:3002/ | tee /tmp/sentinel-headers.txt
           cd frontend
           npm install --no-save --package-lock=false playwright@1.55.0
           npx playwright install --with-deps chromium
