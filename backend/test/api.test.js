@@ -308,3 +308,53 @@ test('isolates events, alerts, rules, audit records, users, and ingest keys betw
   });
   assert.equal(revokeCrossTenant.status,404);
 });
+
+test('WebSocket live events stay inside the authenticated organization',async()=>{
+  const WebSocket=require('ws');
+  const store=require('../storage');
+  const security=require('../security');
+  const base='http://127.0.0.1:'+server.address().port;
+  const suffix=(Date.now()+1).toString(36);
+  const organizationA=await store.createOrganization({id:'org-ws-a-'+suffix,name:'WebSocket A',slug:'websocket-a-'+suffix});
+  const organizationB=await store.createOrganization({id:'org-ws-b-'+suffix,name:'WebSocket B',slug:'websocket-b-'+suffix});
+  const passwordHash=bcrypt.hashSync('long-test-password-789',4);
+  const userAId=await store.addUser({username:'ws-a-'+suffix,password_hash:passwordHash,role:'admin',organization_id:organizationA.id});
+  const userBId=await store.addUser({username:'ws-b-'+suffix,password_hash:passwordHash,role:'admin',organization_id:organizationB.id});
+  const userA={id:userAId,username:'ws-a-'+suffix,role:'admin',organization_id:organizationA.id};
+  const userB={id:userBId,username:'ws-b-'+suffix,role:'admin',organization_id:organizationB.id};
+  const rawA=security.generateIngestKey();
+  const rawB=security.generateIngestKey();
+  await store.createIngestKey({id:'ws-key-a-'+suffix,name:'ws-a',raw:rawA,hash:crypto.createHash('sha256').update(rawA).digest('hex'),created_by:userA.username,organization_id:organizationA.id});
+  await store.createIngestKey({id:'ws-key-b-'+suffix,name:'ws-b',raw:rawB,hash:crypto.createHash('sha256').update(rawB).digest('hex'),created_by:userB.username,organization_id:organizationB.id});
+  const wsA=new WebSocket(base.replace('http','ws')+'/ws',{headers:{Cookie:'sentinel_session='+encodeURIComponent(security.token(userA))}});
+  const wsB=new WebSocket(base.replace('http','ws')+'/ws',{headers:{Cookie:'sentinel_session='+encodeURIComponent(security.token(userB))}});
+  await Promise.all([
+    new Promise((resolve,reject)=>{wsA.once('open',resolve);wsA.once('error',reject)}),
+    new Promise((resolve,reject)=>{wsB.once('open',resolve);wsB.once('error',reject)})
+  ]);
+  wsA.send(JSON.stringify({type:'subscribe'}));
+  wsB.send(JSON.stringify({type:'subscribe'}));
+  const receivedB=new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(new Error('Company B WebSocket event timeout')),2000);
+    wsB.on('message',(raw)=>{
+      const msg=JSON.parse(raw.toString());
+      if(msg.type==='event'&&msg.event.message==='ws-b-event'){clearTimeout(timer);resolve()}
+    });
+  });
+  let receivedOnA=false;
+  wsA.on('message',(raw)=>{
+    const msg=JSON.parse(raw.toString());
+    if(msg.type==='event'&&msg.event.message==='ws-b-event')receivedOnA=true;
+  });
+  const ingest=await fetch(base+'/api/ingest/event',{
+    method:'POST',
+    headers:{'content-type':'application/json','x-api-key':rawB},
+    body:JSON.stringify({severity:'INFO',category:'system',source_ip:'10.70.0.2',message:'ws-b-event',hostname:'company-b'})
+  });
+  assert.equal(ingest.status,201);
+  await receivedB;
+  await new Promise(resolve=>setTimeout(resolve,50));
+  assert.equal(receivedOnA,false);
+  wsA.close();
+  wsB.close();
+});
