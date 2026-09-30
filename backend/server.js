@@ -55,6 +55,10 @@ function heartbeatClients(){
     try{ws.ping()}catch{ws.terminate();clients.delete(ws)}
   }
 }
+function closeWebSocketClients(){
+  for(const ws of clients)ws.terminate();
+  clients.clear();
+}
 const metrics={requests:0,errors:0,events_ingested:0,alerts_created:0};
 function matches(event,filter={}){const q=String(filter.search||'').trim().toLowerCase();return(!filter.severity||event.severity===filter.severity)&&(!q||event.message.toLowerCase().includes(q)||event.category.toLowerCase().includes(q)||event.source_ip.toLowerCase().includes(q)||event.hostname.toLowerCase().includes(q))}
 function broadcast(payload,filterable=false,organizationId){for(const ws of clients){if(ws.readyState!==1||ws.organization_id!==organizationId)continue;if(filterable&&payload.type==='event'&&!matches(payload.event,ws.filter))continue;try{ws.send(JSON.stringify(payload))}catch{ws.terminate();clients.delete(ws)}}}
@@ -166,4 +170,4 @@ process.on('SIGTERM',()=>shutdown('SIGTERM'));
 process.on('SIGINT',()=>shutdown('SIGINT'));
 process.on('uncaughtException',err=>{logger.error('uncaught_exception',{error:err?.stack||String(err)});shutdown('uncaughtException')});
 process.on('unhandledRejection',reason=>{logger.error('unhandled_rejection',{error:reason?.stack||String(reason)});shutdown('unhandledRejection')});
-module.exports={app,startServer,normalize,processEvent,heartbeatClients};
+module.exports={app,startServer,normalize,processEvent,heartbeatClients,closeWebSocketClients};
