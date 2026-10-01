@@ -232,8 +232,8 @@ test('isolates events, alerts, rules, audit records, users, and ingest keys betw
   const rawA=security.generateIngestKey();
   const rawB=security.generateIngestKey();
   const hash=(value)=>crypto.createHash('sha256').update(value).digest('hex');
-  const keyA=await store.createIngestKey({id:'key-a-'+suffix,name:'Company A connector',raw:rawA,hash:hash(rawA),created_by:userA.username,organization_id:organizationA.id});
-  const keyB=await store.createIngestKey({id:'key-b-'+suffix,name:'Company B connector',raw:rawB,hash:hash(rawB),created_by:userB.username,organization_id:organizationB.id});
+  const keyA=await store.createIngestKey({id:'key-a-'+suffix,name:'Company A connector',raw:rawA,hash:hash(rawA),created_by:'integration-a-'+suffix,organization_id:organizationA.id});
+  const keyB=await store.createIngestKey({id:'key-b-'+suffix,name:'Company B connector',raw:rawB,hash:hash(rawB),created_by:'integration-b-'+suffix,organization_id:organizationB.id});
   assert.equal(keyA.organization_id,organizationA.id);
   assert.equal(keyB.organization_id,organizationB.id);
   const ruleB=await store.upsertRule({
