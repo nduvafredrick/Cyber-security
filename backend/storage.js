@@ -69,6 +69,7 @@ function prune(){
   db.prepare('DELETE FROM events WHERE timestamp < ?').run(cutoff);
   db.prepare('DELETE FROM alerts WHERE rowid NOT IN (SELECT rowid FROM alerts ORDER BY created_at DESC LIMIT 5000)').run();
   db.prepare('DELETE FROM audit WHERE rowid NOT IN (SELECT rowid FROM audit ORDER BY timestamp DESC LIMIT 5000)').run();
+  db.prepare("DELETE FROM ingest_batches WHERE received_at < ?").run(new Date(Date.now()-7*86400000).toISOString());
 }
 function requireOrganization(organizationId){
   if(!organizationId)throw new Error('Organization context is required');
