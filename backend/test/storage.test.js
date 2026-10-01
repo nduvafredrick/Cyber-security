@@ -132,7 +132,7 @@ test('legacy SQLite data migrates into the default organization',()=>{
   assert.equal(db.prepare('SELECT organization_id FROM events WHERE id=?').get('legacy-event').organization_id,DEFAULT_ORGANIZATION_ID);
   assert.equal(db.prepare('SELECT organization_id FROM users WHERE username=?').get('legacy-admin').organization_id,DEFAULT_ORGANIZATION_ID);
   assert.equal(db.prepare('SELECT organization_id FROM detection_rules WHERE rule_key=?').get('legacy-rule').organization_id,DEFAULT_ORGANIZATION_ID);
-  assert.deepEqual(db.prepare('SELECT version FROM _schema_migrations ORDER BY version').all().map(x=>x.version),[1,2,3]);
+  assert.deepEqual(db.prepare('SELECT version FROM _schema_migrations ORDER BY version').all().map(x=>x.version),[1,2,3,4]);
   db.close();
 });
 
