@@ -171,7 +171,8 @@ test('SQLite integration provisioning binds the connector to one organization',(
     type:'agent',
     environment:'Production',
     key_id:'integration-key-test',
-    key_raw:'sk_integration-test'
+    key_raw:'sk_integration-test',
+    created_by:'admin'
   });
   assert.equal(result.integration.organization_id,store.DEFAULT_ORGANIZATION_ID);
   assert.equal(result.integration.type,'agent');
