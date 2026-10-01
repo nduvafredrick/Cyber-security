@@ -131,7 +131,7 @@ function getIngestKeys(organizationId){
 function verifyIngestKey(value){
   const hash=crypto.createHash('sha256').update(String(value||'')).digest('hex');
   const key=db.prepare('SELECT id,organization_id,name,key_prefix FROM ingest_keys WHERE key_hash=? AND enabled=1 AND revoked_at IS NULL').get(hash)||null;
-  if(key)db.prepare('UPDATE ingest_keys SET last_used_at=? WHERE id=?').run(now(),key.id);
+  if(key){db.prepare('UPDATE ingest_keys SET last_used_at=? WHERE id=?').run(now(),key.id);touchIntegrationByKey(key.id)}
   return key;
 }
 function createIngestKey(key){
@@ -194,6 +194,38 @@ function createOrganization(organization){
   );
   return db.prepare('SELECT * FROM organizations WHERE id=?').get(organization.id);
 }
+function listIntegrations(organizationId){
+  requireOrganization(organizationId);
+  return db.prepare('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE organization_id=? ORDER BY created_at DESC').all(organizationId);
+}
+function getIntegration(id,organizationId){
+  requireOrganization(organizationId);
+  return db.prepare('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE id=? AND organization_id=?').get(id,organizationId)||null;
+}
+function createIntegrationWithKey(input){
+  requireOrganization(input.organization_id);
+  const t=now();
+  return db.transaction(()=>{
+    db.prepare('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,1,?,?,?)').run(
+      input.key_id,input.organization_id,input.name,input.key_hash,input.key_raw.slice(0,8),input.environment,t,null,input.created_by
+    );
+    db.prepare('INSERT INTO integrations(id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,NULL)').run(
+      input.id,input.organization_id,input.name,input.type,input.environment,'ACTIVE',input.key_id,t,t
+    );
+    return {
+      integration:getIntegration(input.id,input.organization_id),
+      key:{key_id:input.key_id,raw:input.key_raw}
+    };
+  })();
+}
+function setIntegrationStatus(id,status,organizationId){
+  requireOrganization(organizationId);
+  db.prepare('UPDATE integrations SET status=?,updated_at=? WHERE id=? AND organization_id=?').run(status,now(),id,organizationId);
+  return getIntegration(id,organizationId);
+}
+function touchIntegrationByKey(keyId){
+  db.prepare('UPDATE integrations SET last_seen_at=?,updated_at=? WHERE ingest_key_id=? AND status=\'ACTIVE\'').run(now(),now(),keyId);
+}
 function getOrganization(organizationId){
   requireOrganization(organizationId);
   return db.prepare('SELECT * FROM organizations WHERE id=?').get(organizationId)||null;
@@ -230,6 +262,10 @@ module.exports={
   createOrganizationWithAdmin:provisionOrganization,
   provisionOrganization,
   getOrganization,
+  listIntegrations,
+  getIntegration,
+  createIntegrationWithKey,
+  setIntegrationStatus,
   getEvents,
   getRecentEvents,
   getAlerts,
