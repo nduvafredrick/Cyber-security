@@ -223,7 +223,7 @@ function createIntegrationWithKey(input){
 }
 function setIntegrationStatus(id,status,organizationId){
   requireOrganization(organizationId);
-  const tx=db.transaction(()=>{db.prepare('UPDATE integrations SET status=?,updated_at=? WHERE id=? AND organization_id=?').run(status,now(),id,organizationId);const integration=db.prepare('SELECT ingest_key_id FROM integrations WHERE id=? AND organization_id=?').get(id,organizationId);if(integration?.ingest_key_id)db.prepare('UPDATE ingest_keys SET enabled=?,revoked_at=CASE WHEN ?=0 THEN COALESCE(revoked_at,?) ELSE revoked_at END WHERE id=?').run(status==='ACTIVE'?1:0,status==='ACTIVE'?1:0,now(),integration.ingest_key_id);});tx();
+  const tx=db.transaction(()=>{db.prepare('UPDATE integrations SET status=?,updated_at=? WHERE id=? AND organization_id=?').run(status,now(),id,organizationId);const integration=db.prepare('SELECT ingest_key_id FROM integrations WHERE id=? AND organization_id=?').get(id,organizationId);if(integration?.ingest_key_id){const active=status==='ACTIVE';db.prepare('UPDATE ingest_keys SET enabled=?,revoked_at=? WHERE id=?').run(active?1:0,active?null:now(),integration.ingest_key_id);}});tx();
   return getIntegration(id,organizationId);
 }
 function touchIntegrationByKey(keyId){
