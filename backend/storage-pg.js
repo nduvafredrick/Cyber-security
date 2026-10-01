@@ -33,6 +33,11 @@ async function listIntegrations(organizationId){
   await ensure();requireOrganization(organizationId);
   return q('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE organization_id=$1 ORDER BY created_at DESC',[organizationId]);
 }
+async function getIntegrationByIngestKey(keyId){
+  await ensure();
+  const rows=await q('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE ingest_key_id=$1',[keyId]);
+  return rows[0]||null;
+}
 async function getIntegration(id,organizationId){
   await ensure();requireOrganization(organizationId);
   const rows=await q('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE id=$1 AND organization_id=$2',[id,organizationId]);
@@ -53,7 +58,11 @@ async function createIntegrationWithKey(input){
 }
 async function setIntegrationStatus(id,status,organizationId){
   await ensure();requireOrganization(organizationId);
-  const rows=await q('UPDATE integrations SET status=$1,updated_at=NOW() WHERE id=$2 AND organization_id=$3 RETURNING id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at',[status,id,organizationId]);
+  const rows=await sql.begin(async tx=>{
+    const integration=await tx`UPDATE integrations SET status=${status},updated_at=NOW() WHERE id=${id} AND organization_id=${organizationId} RETURNING id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at`;
+    if(integration[0]?.ingest_key_id)await tx`UPDATE ingest_keys SET enabled=${status==='ACTIVE'} WHERE id=${integration[0].ingest_key_id}`;
+    return integration;
+  });
   return rows[0]||null;
 }
 async function touchIntegrationByKey(keyId){
@@ -128,7 +137,7 @@ async function getIngestKeys(organizationId){
 async function verifyIngestKey(raw){
   await ensure();
   const h=crypto.createHash('sha256').update(String(raw||'')).digest('hex');
-  const rows=await q('SELECT id,organization_id,name,key_prefix FROM ingest_keys WHERE key_hash=$1 AND enabled=TRUE AND revoked_at IS NULL',[h]);
+  const rows=await q("SELECT k.id,k.organization_id,k.name,k.key_prefix FROM ingest_keys k LEFT JOIN integrations i ON i.ingest_key_id=k.id WHERE k.key_hash=$1 AND k.enabled=TRUE AND k.revoked_at IS NULL AND (i.id IS NULL OR i.status='ACTIVE')",[h]);
   if(!rows[0])return null;
   await q('UPDATE ingest_keys SET last_used_at=NOW() WHERE id=$1',[rows[0].id]);
   await touchIntegrationByKey(rows[0].id);
@@ -219,6 +228,7 @@ module.exports={
   getOrganization,
   listIntegrations,
   getIntegration,
+  getIntegrationByIngestKey,
   createIntegrationWithKey,
   setIntegrationStatus,
   getEvents,
