@@ -5,6 +5,7 @@ const os=require('os');
 const path=require('path');
 const crypto=require('crypto');
 const bcrypt=require('bcryptjs');
+const security=require('../security');
 
 let server;
 test.before(async()=>{
