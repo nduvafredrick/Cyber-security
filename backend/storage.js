@@ -207,7 +207,7 @@ function createIntegrationWithKey(input){
   const t=now();
   return db.transaction(()=>{
     db.prepare('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,last_used_at,created_by) VALUES (?,?,?,?,?,?,1,?,?,?)').run(
-      input.key_id,input.organization_id,input.name,input.key_hash,input.key_raw.slice(0,8),input.environment,t,null,input.created_by
+      input.key_id,input.organization_id,input.name,input.key_hash||crypto.createHash('sha256').update(input.key_raw).digest('hex'),input.key_raw.slice(0,8),input.environment,t,null,input.created_by
     );
     db.prepare('INSERT INTO integrations(id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,NULL)').run(
       input.id,input.organization_id,input.name,input.type,input.environment,'ACTIVE',input.key_id,t,t
