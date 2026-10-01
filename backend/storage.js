@@ -61,7 +61,7 @@ if(db.prepare('SELECT COUNT(*) count FROM detection_rules WHERE organization_id=
   seedDefaultRule(DEFAULT_ORGANIZATION_ID);
 }
 
-const insertEvent=db.prepare("INSERT OR REPLACE INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata) VALUES (@id,@organization_id,@timestamp,@severity,@category,@event_type,@source_ip,@message,@hostname,@metadata)");
+const insertEvent=db.prepare("INSERT OR REPLACE INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata,agent_id) VALUES (@id,@organization_id,@timestamp,@severity,@category,@event_type,@source_ip,@message,@hostname,@metadata,@agent_id)");
 const insertMany=db.transaction(items=>{for(const e of items)insertEvent.run(e)});
 
 function prune(){
