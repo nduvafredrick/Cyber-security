@@ -193,7 +193,7 @@ function makeAgentCredential(agentId){const secret=crypto.randomBytes(32).toStri
 function validateAgentEvent(input){
   if(!input||typeof input!=='object'||Array.isArray(input))throw Error('Event must be an object');
   const timestamp=String(input.timestamp||'');
-  if(!/^\\d{4}-\\d{2}-\\d{2}T/.test(timestamp)||!timestamp.endsWith('Z')||Number.isNaN(Date.parse(timestamp)))throw Error('Invalid timestamp');
+  if(!/^\d{4}-\d{2}-\d{2}T/.test(timestamp)||!timestamp.endsWith('Z')||Number.isNaN(Date.parse(timestamp)))throw Error('Invalid timestamp');
   if(Date.parse(timestamp)>Date.now()+86400000)throw Error('Timestamp is too far in the future');
   const source=String(input.source||'');
   if(!['linux','windows','syslog','app','other'].includes(source))throw Error('Invalid source');
