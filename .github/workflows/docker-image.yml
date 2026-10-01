@@ -3,9 +3,13 @@ name: Sentinel CI
 on:
   workflow_dispatch:
   push:
-    branches: [main, "codex/**"]
+    branches: [main]
   pull_request:
     branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -14,10 +18,10 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: |
             backend/package-lock.json
@@ -28,6 +32,12 @@ jobs:
       - name: Install frontend
         working-directory: frontend
         run: npm ci --no-audit --no-fund
+      - name: Backend dependency security audit
+        working-directory: backend
+        run: npm audit --omit=dev --audit-level=high
+      - name: Frontend dependency security audit
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
       - name: Backend syntax check
         working-directory: backend
         run: node --check server.js
@@ -52,26 +62,43 @@ jobs:
       - name: Frontend build
         working-directory: frontend
         run: npm run build
-      - name: Dependency security audit
-        working-directory: backend
-        run: npm audit --omit=dev --audit-level=high
       - name: Build Docker image
         run: docker build --pull -t sentinel-siem:ci .
       - name: Docker image smoke test
         run: |
           ADMIN_HASH=$(node -e "console.log(require('./backend/node_modules/bcryptjs').hashSync('ci-password',4))")
-          docker run -d --name sentinel-ci             -e NODE_ENV=test             -e JWT_SECRET=ci-jwt-secret-012345678901234567890123456789             -e INGEST_API_KEY=ci-ingest-key-0123456789             -e METRICS_API_KEY=ci-metrics-key-0123456789             -e ADMIN_PASSWORD_HASH="$ADMIN_HASH"             -p 3001:3001 sentinel-siem:ci
+          docker run -d --name sentinel-ci \
+            -e NODE_ENV=test \
+            -e JWT_SECRET=ci-jwt-secret-012345678901234567890123456789 \
+            -e INGEST_API_KEY=ci-ingest-key-0123456789 \
+            -e METRICS_API_KEY=ci-metrics-key-0123456789 \
+            -e ADMIN_PASSWORD_HASH="$ADMIN_HASH" \
+            -p 3001:3001 sentinel-siem:ci
           for i in {1..20}; do
             if curl -fsS http://127.0.0.1:3001/ready; then exit 0; fi
             sleep 2
           done
           docker logs sentinel-ci
           exit 1
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.55.0
       - name: Browser UI tests
         run: |
           ADMIN_HASH=$(node -e "console.log(require('./backend/node_modules/bcryptjs').hashSync('ci-password',4))")
           docker rm -f sentinel-browser || true
-          docker run -d --name sentinel-browser             -e NODE_ENV=test             -e JWT_SECRET=ci-jwt-secret-012345678901234567890123456789             -e INGEST_API_KEY=ci-ingest-key-0123456789             -e METRICS_API_KEY=ci-metrics-key-0123456789             -e ADMIN_PASSWORD_HASH="$ADMIN_HASH"             -e SESSION_COOKIE_SECURE=false             -e CSP_UPGRADE_INSECURE_REQUESTS=false             -e HSTS=false             -p 3002:3001 sentinel-siem:ci
+          docker run -d --name sentinel-browser \
+            -e NODE_ENV=test \
+            -e JWT_SECRET=ci-jwt-secret-012345678901234567890123456789 \
+            -e INGEST_API_KEY=ci-ingest-key-0123456789 \
+            -e METRICS_API_KEY=ci-metrics-key-0123456789 \
+            -e ADMIN_PASSWORD_HASH="$ADMIN_HASH" \
+            -e SESSION_COOKIE_SECURE=false \
+            -e CSP_UPGRADE_INSECURE_REQUESTS=false \
+            -e HSTS=false \
+            -p 3002:3001 sentinel-siem:ci
           for i in {1..20}; do
             if curl -fsS http://127.0.0.1:3002/ready; then break; fi
             sleep 2
@@ -102,8 +129,14 @@ jobs:
           echo '--- browser container logs ---'
           docker logs sentinel-browser 2>&1 | tail -n 300 || true
           echo '--- direct asset request with browser-like headers ---'
-          curl -sS -D - -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36' -H 'Accept: text/css,*/*;q=0.1' http://127.0.0.1:3002/assets/index-C7lXE_ga.css -o /tmp/browser-css.out || true
-          head -c 500 /tmp/browser-css.out 2>/dev/null || true
+          CSS_ASSET="$(grep -oE 'href="/assets/[^"]+\.css"' /tmp/sentinel-index.html | head -1 | cut -d'"' -f2)"
+          if [ -n "$CSS_ASSET" ]; then
+            echo "CSS asset: $CSS_ASSET"
+            curl -sS -D - -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36' -H 'Accept: text/css,*/*;q=0.1' "http://127.0.0.1:3002$CSS_ASSET" -o /tmp/browser-css.out || true
+            head -c 500 /tmp/browser-css.out 2>/dev/null || true
+          else
+            echo 'No CSS asset found in index.html'
+          fi
 
       - name: Stop smoke test container
         if: always()
