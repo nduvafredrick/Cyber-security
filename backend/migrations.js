@@ -104,7 +104,7 @@ function sqliteMigrationV4(db){
 function runSqliteMigrations(db){
   db.exec('CREATE TABLE IF NOT EXISTS _schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)');
   const applied=new Set(db.prepare('SELECT version FROM _schema_migrations').all().map(row=>row.version));
-  const migrations=[[1,sqliteMigrationV1],[2,sqliteMigrationV2],[3,sqliteMigrationV3],[4,sqliteMigrationV4]];
+  const migrations=[[1,sqliteMigrationV1],[2,sqliteMigrationV2],[3,sqliteMigrationV3],[4,sqliteMigrationV4],[5,sqliteMigrationV5]];
   for(const [version,migration] of migrations){
     if(applied.has(version))continue;
     migration(db);
@@ -177,10 +177,36 @@ async function postgresMigrationV4(q){
   await q('CREATE INDEX IF NOT EXISTS idx_integrations_ingest_key ON integrations(ingest_key_id)');
 }
 
+function sqliteMigrationV5(db){
+  db.exec("ALTER TABLE events ADD COLUMN event_type TEXT NOT NULL DEFAULT 'generic'");
+  db.exec("ALTER TABLE events ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'");
+  db.exec("ALTER TABLE events ADD COLUMN agent_id TEXT");
+  db.exec("CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), integration_id TEXT REFERENCES integrations(id), name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','active','disabled')), credential_hash TEXT, credential_prefix TEXT, version TEXT, hostname TEXT, os TEXT, last_seen_at TEXT, last_heartbeat TEXT, events_received INTEGER NOT NULL DEFAULT 0, created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL, enrolled_at TEXT, disabled_at TEXT)");
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agents_org ON agents(organization_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agents_integration ON agents(integration_id)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_credential_hash ON agents(credential_hash) WHERE credential_hash IS NOT NULL');
+  db.exec('CREATE TABLE IF NOT EXISTS agent_enrollment_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agent_enrollment_agent ON agent_enrollment_tokens(agent_id)');
+  db.exec('CREATE TABLE IF NOT EXISTS ingest_batches (agent_id TEXT NOT NULL, batch_id TEXT NOT NULL, received_at TEXT NOT NULL, accepted INTEGER NOT NULL, PRIMARY KEY(agent_id,batch_id))');
+}
+
+async function postgresMigrationV5(q){
+  await q("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'generic'");
+  await q("ALTER TABLE events ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb");
+  await q("ALTER TABLE events ADD COLUMN IF NOT EXISTS agent_id TEXT");
+  await q("CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,organization_id TEXT NOT NULL REFERENCES organizations(id),integration_id TEXT REFERENCES integrations(id),name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','active','disabled')),credential_hash TEXT,credential_prefix TEXT,version TEXT,hostname TEXT,os TEXT,last_seen_at TIMESTAMPTZ,last_heartbeat JSONB,events_received INTEGER NOT NULL DEFAULT 0,created_by INTEGER REFERENCES users(id),created_at TIMESTAMPTZ NOT NULL,enrolled_at TIMESTAMPTZ,disabled_at TIMESTAMPTZ)");
+  await q('CREATE INDEX IF NOT EXISTS idx_agents_org ON agents(organization_id)');
+  await q('CREATE INDEX IF NOT EXISTS idx_agents_integration ON agents(integration_id)');
+  await q('CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_credential_hash ON agents(credential_hash) WHERE credential_hash IS NOT NULL');
+  await q('CREATE TABLE IF NOT EXISTS agent_enrollment_tokens(id BIGSERIAL PRIMARY KEY,agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,token_hash TEXT NOT NULL UNIQUE,expires_at TIMESTAMPTZ NOT NULL,used_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL)');
+  await q('CREATE INDEX IF NOT EXISTS idx_agent_enrollment_agent ON agent_enrollment_tokens(agent_id)');
+  await q('CREATE TABLE IF NOT EXISTS ingest_batches(agent_id TEXT NOT NULL,batch_id TEXT NOT NULL,received_at TIMESTAMPTZ NOT NULL,accepted INTEGER NOT NULL,PRIMARY KEY(agent_id,batch_id))');
+}
+
 async function runPostgresMigrations(q){
   await q('CREATE TABLE IF NOT EXISTS _schema_migrations(version INTEGER PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL)');
   const applied=new Set((await q('SELECT version FROM _schema_migrations')).map(row=>Number(row.version)));
-  const migrations=[[1,postgresMigrationV1],[2,postgresMigrationV2],[3,postgresMigrationV3],[4,postgresMigrationV4]];
+  const migrations=[[1,postgresMigrationV1],[2,postgresMigrationV2],[3,postgresMigrationV3],[4,postgresMigrationV4],[5,postgresMigrationV5]];
   for(const [version,migration] of migrations){
     if(applied.has(version))continue;
     await migration(q);

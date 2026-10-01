@@ -29,6 +29,8 @@ const config={
   trustProxy:(v=>v==null||v===''||v==='false'?false:v==='true'?true:/^\d+$/.test(v)?Number(v):v)(process.env.TRUST_PROXY),
   ingestRateLimitPerMinute:Math.max(1,Math.floor(Number(process.env.INGEST_RATE_LIMIT_PER_MINUTE||300))),
   bulkIngestRateLimitPerMinute:Math.max(1,Math.floor(Number(process.env.BULK_INGEST_RATE_LIMIT_PER_MINUTE||60))),
+  agentIngestRateLimitPerSecond:Math.max(1,Math.floor(Number(process.env.AGENT_INGEST_RATE_LIMIT_PER_SECOND||20))),
+  agentEnrollmentRateLimitPerMinute:Math.max(1,Math.floor(Number(process.env.AGENT_ENROLLMENT_RATE_LIMIT_PER_MINUTE||10))),
   loginRateLimitPer15Minutes:Math.max(1,Math.floor(Number(process.env.LOGIN_RATE_LIMIT_PER_15_MINUTES||10))),
   sessionCookieSecure:process.env.SESSION_COOKIE_SECURE==null?env==='production':process.env.SESSION_COOKIE_SECURE==='true',
   upgradeInsecureRequests:process.env.CSP_UPGRADE_INSECURE_REQUESTS==null?env==='production':process.env.CSP_UPGRADE_INSECURE_REQUESTS==='true',

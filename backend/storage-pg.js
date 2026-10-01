@@ -174,7 +174,7 @@ async function addEvents(items){
   await ensure();
   for(const e of items){
     requireOrganization(e.organization_id);
-    await q('INSERT INTO events(id,organization_id,timestamp,severity,category,source_ip,message,hostname) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET organization_id=EXCLUDED.organization_id,timestamp=EXCLUDED.timestamp,severity=EXCLUDED.severity,category=EXCLUDED.category,source_ip=EXCLUDED.source_ip,message=EXCLUDED.message,hostname=EXCLUDED.hostname',[e.id,e.organization_id,e.timestamp,e.severity,e.category,e.source_ip,e.message,e.hostname]);
+    await q('INSERT INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata,agent_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET organization_id=EXCLUDED.organization_id,timestamp=EXCLUDED.timestamp,severity=EXCLUDED.severity,category=EXCLUDED.category,event_type=EXCLUDED.event_type,source_ip=EXCLUDED.source_ip,message=EXCLUDED.message,hostname=EXCLUDED.hostname,metadata=EXCLUDED.metadata',[e.id,e.organization_id,e.timestamp,e.severity,e.category,e.event_type||'generic',e.source_ip,e.message,e.hostname,JSON.stringify(e.metadata||{}),e.agent_id||null]);
   }
 }
 async function addAlert(a){
@@ -217,8 +217,23 @@ async function prune(){
   await q('DELETE FROM events WHERE timestamp<$1',[cut]);
   await q('DELETE FROM alerts WHERE id IN(SELECT id FROM alerts ORDER BY created_at DESC OFFSET 5000)');
   await q('DELETE FROM audit WHERE id IN(SELECT id FROM audit ORDER BY timestamp DESC OFFSET 5000)');
+  await q("DELETE FROM ingest_batches WHERE received_at < NOW() - INTERVAL '7 days'");
 }
 async function health(){await ensure();await q('SELECT 1');return true;}
+async function createAgent(input){await ensure();requireOrganization(input.organization_id);const t=new Date().toISOString();await q('INSERT INTO agents(id,organization_id,integration_id,name,status,created_by,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[input.id,input.organization_id,input.integration_id||null,input.name,'pending',input.created_by||null,t]);return getAgent(input.id,input.organization_id)}
+async function getAgent(id,organizationId){await ensure();requireOrganization(organizationId);const rows=await q('SELECT * FROM agents WHERE id=$1 AND organization_id=$2',[id,organizationId]);return rows[0]||null}
+async function listAgents(organizationId){await ensure();requireOrganization(organizationId);return q('SELECT * FROM agents WHERE organization_id=$1 ORDER BY created_at DESC',[organizationId])}
+async function createEnrollmentToken(agentId,organizationId,tokenHash,expiresAt){await ensure();requireOrganization(organizationId);if(!await getAgent(agentId,organizationId))throw new Error('Agent not found');const t=new Date().toISOString();await q('INSERT INTO agent_enrollment_tokens(agent_id,token_hash,expires_at,created_at) VALUES($1,$2,$3,$4)',[agentId,tokenHash,expiresAt,t]);return {agent_id:agentId,expires_at:expiresAt}}
+async function getEnrollmentToken(tokenHash){await ensure();const rows=await q('SELECT agent_id,expires_at,used_at FROM agent_enrollment_tokens WHERE token_hash=$1',[tokenHash]);return rows[0]||null}
+async function enrollAgent(tokenHash,input){await ensure();return sql.begin(async tx=>{const rows=await tx`SELECT t.id,t.agent_id,t.expires_at,t.used_at,a.organization_id,a.integration_id,a.status FROM agent_enrollment_tokens t JOIN agents a ON a.id=t.agent_id WHERE t.token_hash=${tokenHash} FOR UPDATE`;const row=rows[0];if(!row||row.used_at||new Date(row.expires_at)<=new Date())return null;await tx`UPDATE agent_enrollment_tokens SET used_at=${new Date().toISOString()} WHERE id=${row.id} AND used_at IS NULL`;await tx`UPDATE agents SET credential_hash=${input.credential_hash},credential_prefix=${input.credential_prefix},status='active',version=${input.version||null},hostname=${input.hostname||null},os=${input.os||null},enrolled_at=NOW(),disabled_at=NULL WHERE id=${row.agent_id}`;const updated=await tx`SELECT * FROM agents WHERE id=${row.agent_id}`;return updated[0]||null})}
+async function getAgentByCredential(agentId,credentialHash){await ensure();const rows=await q("SELECT * FROM agents WHERE id=$1 AND credential_hash=$2 AND status='active'",[agentId,credentialHash]);return rows[0]||null}
+async function updateAgentHeartbeat(agentId,input){await ensure();const rows=await q("UPDATE agents SET last_seen_at=NOW(),last_heartbeat=$1::jsonb,version=COALESCE($2,version),hostname=COALESCE($3,hostname) WHERE id=$4 AND status='active' RETURNING *",[JSON.stringify(input),input.agent_version||null,input.hostname||null,agentId]);return rows[0]||null}
+async function setAgentStatus(id,status,organizationId){await ensure();requireOrganization(organizationId);const rows=await q('UPDATE agents SET status=$1,disabled_at=$2 WHERE id=$3 AND organization_id=$4 RETURNING *',[status,status==='disabled'?new Date().toISOString():null,id,organizationId]);return rows[0]||null}
+async function rotateAgent(id,organizationId){await ensure();requireOrganization(organizationId);await q("UPDATE agents SET credential_hash=NULL,credential_prefix=NULL,status='pending',disabled_at=NULL WHERE id=$1 AND organization_id=$2",[id,organizationId]);await q('DELETE FROM agent_enrollment_tokens WHERE agent_id=$1',[id]);return getAgent(id,organizationId)}
+async function touchIntegration(id,organizationId){await ensure();requireOrganization(organizationId);await q("UPDATE integrations SET last_seen_at=NOW(),updated_at=NOW() WHERE id=$1 AND organization_id=$2 AND status='ACTIVE'",[id,organizationId])}
+async function deleteAgent(id,organizationId){await ensure();requireOrganization(organizationId);const rows=await q('DELETE FROM agents WHERE id=$1 AND organization_id=$2',[id,organizationId]);return rows.count>0}
+async function claimIngestBatch(agentId,batchId,accepted){await ensure();const rows=await q('INSERT INTO ingest_batches(agent_id,batch_id,received_at,accepted) VALUES($1,$2,NOW(),$3) ON CONFLICT(agent_id,batch_id) DO NOTHING RETURNING accepted',[agentId,batchId,accepted]);if(rows[0])return {duplicate:false,accepted:Number(rows[0].accepted)};const existing=await q('SELECT accepted FROM ingest_batches WHERE agent_id=$1 AND batch_id=$2',[agentId,batchId]);return {duplicate:true,accepted:Number(existing[0].accepted)}}
+async function incrementAgentEvents(agentId,count){await ensure();await q('UPDATE agents SET events_received=events_received+$1 WHERE id=$2',[count,agentId])}
 async function close(){await sql.end({timeout:5});}
 
 module.exports={
@@ -251,6 +266,20 @@ module.exports={
   verifyIngestKey,
   createIngestKey,
   revokeIngestKey,
+  createAgent,
+  getAgent,
+  listAgents,
+  createEnrollmentToken,
+  getEnrollmentToken,
+  enrollAgent,
+  getAgentByCredential,
+  updateAgentHeartbeat,
+  setAgentStatus,
+  rotateAgent,
+  deleteAgent,
+  touchIntegration,
+  claimIngestBatch,
+  incrementAgentEvents,
   listRules,
   getRules,
   upsertRule,

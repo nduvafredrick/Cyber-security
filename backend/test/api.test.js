@@ -5,6 +5,7 @@ const os=require('os');
 const path=require('path');
 const crypto=require('crypto');
 const bcrypt=require('bcryptjs');
+const security=require('../security');
 
 let server;
 test.before(async()=>{
@@ -478,9 +479,15 @@ test('admin can provision an organization-bound agent integration and its key in
   assert.equal((await listed.json()).integrations.some(x=>x.id===data.integration.id&&x.organization_id===data.integration.organization_id),true);
   const ingest=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':data.api_key},body:JSON.stringify({severity:'INFO',category:'agent',message:'agent telemetry',hostname:'branch-office'})});
   assert.equal(ingest.status,201);
-  const heartbeat=await fetch(base+'/api/agent/heartbeat',{method:'POST',headers:{'x-api-key':data.api_key}});
+  const agent=await fetch(base+'/api/agents',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'Branch Office Agent Runtime',integration_id:data.integration.id})});
+  assert.equal(agent.status,201);
+  const agentData=await agent.json();
+  const enrolled=await fetch(base+'/api/agent/enroll',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enrollment_token:agentData.enrollment_token,hostname:'branch-office',os:'linux',agent_version:'0.1.0'})});
+  assert.equal(enrolled.status,200);
+  const agentToken=(await enrolled.json()).credential;
+  const heartbeat=await fetch(base+'/api/agent/heartbeat',{method:'POST',headers:{authorization:'Bearer '+agentToken,'content-type':'application/json'},body:JSON.stringify({agent_version:'0.1.0',timestamp:new Date().toISOString(),status:'ok',uptime_s:10,hostname:'branch-office',events_sent_total:1,queue_depth:0,errors_since_last:0})});
   assert.equal(heartbeat.status,200);
-  assert.equal((await heartbeat.json()).status,'ok');
+  assert.equal((await heartbeat.json()).heartbeat_interval_s,30);
 });
 
 test('integration endpoints never expose another organization integration',async()=>{
@@ -507,4 +514,62 @@ test('integration endpoints never expose another organization integration',async
   assert.equal(dataB.integrations.some(x=>x.id===first.integration.id),false);
   const cross=await fetch(base+'/api/admin/integrations/'+second.integration.id,{headers:{authorization:'Bearer '+tokenA}});
   assert.equal(cross.status,404);
+});
+
+test('agent enrollment, heartbeat and batch ingest are organization-bound and idempotent',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const store=require('../storage');
+  const security=require('../security');
+  const marker='agent contract telemetry '+Date.now().toString(36);
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  assert.equal(login.status,200);
+  const cookie=login.headers.get('set-cookie');
+  const integration=await fetch(base+'/api/admin/integrations',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'Contract Agent Integration',type:'agent',environment:'Production'})});
+  assert.equal(integration.status,201);
+  const integrationData=await integration.json();
+  const created=await fetch(base+'/api/agents',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'Contract Agent',integration_id:integrationData.integration.id})});
+  assert.equal(created.status,201);
+  const agentData=await created.json();
+  assert.match(agentData.enrollment_token,/^sge_/);
+  const enrolled=await fetch(base+'/api/agent/enroll',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enrollment_token:agentData.enrollment_token,hostname:'contract-host',os:'linux',arch:'amd64',agent_version:'0.1.0'})});
+  assert.equal(enrolled.status,200);
+  const credential=(await enrolled.json()).credential;
+  assert.match(credential,/^sga_agt_[a-f0-9]{12}\.[A-Za-z0-9_-]+$/);
+  const reused=await fetch(base+'/api/agent/enroll',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enrollment_token:agentData.enrollment_token,hostname:'contract-host',os:'linux',arch:'amd64',agent_version:'0.1.0'})});
+  assert.equal(reused.status,401);
+  const heartbeat=await fetch(base+'/api/agent/heartbeat',{method:'POST',headers:{authorization:'Bearer '+credential},body:JSON.stringify({agent_version:'0.1.0',timestamp:new Date().toISOString(),status:'ok',uptime_s:10,hostname:'contract-host',events_sent_total:0,queue_depth:0,errors_since_last:0})});
+  assert.equal(heartbeat.status,200);
+  const batch={batch_id:'01JAGENTCONTRACT01',events:[{timestamp:new Date().toISOString(),source:'linux',category:'authentication',event_type:'login_failure',severity:'HIGH',host:'contract-host',source_ip:'10.0.0.7',message:marker,metadata:{user:'alice'}}]};
+  const first=await fetch(base+'/api/ingest/events',{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify(batch)});
+  assert.equal(first.status,200);
+  assert.deepEqual(await first.json(),{batch_id:batch.batch_id,accepted:1,rejected:[],duplicate:false});
+  const second=await fetch(base+'/api/ingest/events',{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify(batch)});
+  assert.equal(second.status,200);
+  const duplicate=await second.json();
+  assert.equal(duplicate.duplicate,true);
+  assert.equal(duplicate.accepted,1);
+  const stored=await store.getEvents({organization_id:store.DEFAULT_ORGANIZATION_ID,search:marker,limit:10,offset:0});
+  assert.equal(stored.total,1);
+});
+
+test('agent cannot ingest events for another organization',async()=>{
+  const security=require('../security');
+  const base='http://127.0.0.1:'+server.address().port;
+  const store=require('../storage');
+  const suffix=Date.now().toString(36);
+  const org=await store.createOrganization({id:'agent-org-'+suffix,name:'Agent Org',slug:'agent-org-'+suffix});
+  const userId=await store.addUser({username:'agent-admin-'+suffix,password_hash:bcrypt.hashSync('long-agent-password',4),role:'admin',organization_id:org.id});
+  const token=security.token({id:userId,username:'agent-admin-'+suffix,role:'admin',organization_id:org.id});
+  const created=await fetch(base+'/api/agents',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({name:'Tenant Agent'})});
+  assert.equal(created.status,201);
+  const data=await created.json();
+  const enrolled=await fetch(base+'/api/agent/enroll',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enrollment_token:data.enrollment_token,hostname:'tenant-host',os:'linux',agent_version:'0.1.0'})});
+  assert.equal(enrolled.status,200);
+  const credential=(await enrolled.json()).credential;
+  const response=await fetch(base+'/api/ingest/events',{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify({batch_id:'01JTENANTAGENT01',events:[{timestamp:new Date().toISOString(),source:'linux',category:'system',event_type:'boot',severity:'LOW',host:'tenant-host',message:'booted',org_id:'org-default'}]})});
+  assert.equal(response.status,200);
+  const events=await store.getEvents({organization_id:org.id,search:'booted',limit:10,offset:0});
+  assert.equal(events.total,1);
+  const defaultEvents=await store.getEvents({organization_id:store.DEFAULT_ORGANIZATION_ID,search:'booted',limit:10,offset:0});
+  assert.equal(defaultEvents.total,0);
 });

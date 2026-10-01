@@ -4,6 +4,7 @@ const fs=require('fs');
 const os=require('os');
 const path=require('path');
 const bcrypt=require('bcryptjs');
+const crypto=require('crypto');
 
 function freshEnv(dir){
   process.env.NODE_ENV='test';
@@ -132,7 +133,7 @@ test('legacy SQLite data migrates into the default organization',()=>{
   assert.equal(db.prepare('SELECT organization_id FROM events WHERE id=?').get('legacy-event').organization_id,DEFAULT_ORGANIZATION_ID);
   assert.equal(db.prepare('SELECT organization_id FROM users WHERE username=?').get('legacy-admin').organization_id,DEFAULT_ORGANIZATION_ID);
   assert.equal(db.prepare('SELECT organization_id FROM detection_rules WHERE rule_key=?').get('legacy-rule').organization_id,DEFAULT_ORGANIZATION_ID);
-  assert.deepEqual(db.prepare('SELECT version FROM _schema_migrations ORDER BY version').all().map(x=>x.version),[1,2,3,4]);
+  assert.deepEqual(db.prepare('SELECT version FROM _schema_migrations ORDER BY version').all().map(x=>x.version),[1,2,3,4,5]);
   db.close();
 });
 
@@ -179,5 +180,20 @@ test('SQLite integration provisioning binds the connector to one organization',(
   assert.equal(result.key.key_id,'integration-key-test');
   assert.equal(store.listIntegrations(store.DEFAULT_ORGANIZATION_ID).length,1);
   assert.equal(store.getIntegration('integration-test',store.DEFAULT_ORGANIZATION_ID).name,'Test Sentinel Agent');
+  store.db.close();
+});
+
+
+test('SQLite agent enrollment is single-use and derives organization from the agent',()=>{
+  const {store}=makeStore();
+  const token='sge_'+crypto.randomBytes(32).toString('base64url');
+  const agent=store.createAgent({id:'agt-test-enroll',organization_id:store.DEFAULT_ORGANIZATION_ID,name:'Test Agent',created_by:1});
+  const expiresAt=new Date(Date.now()+86400000).toISOString();
+  store.createEnrollmentToken(agent.id,store.DEFAULT_ORGANIZATION_ID,crypto.createHash('sha256').update(token).digest('hex'),expiresAt);
+  const enrolled=store.enrollAgent(crypto.createHash('sha256').update(token).digest('hex'),{credential_hash:'a'.repeat(64),credential_prefix:'sga_agt_',version:'0.1.0',hostname:'host',os:'linux'});
+  assert.equal(enrolled.status,'active');
+  assert.equal(enrolled.organization_id,store.DEFAULT_ORGANIZATION_ID);
+  assert.equal(store.enrollAgent(crypto.createHash('sha256').update(token).digest('hex'),{credential_hash:'b'.repeat(64),credential_prefix:'sga_agt_',version:'0.1.0',hostname:'host',os:'linux'}),null);
+  assert.equal(store.getAgentByCredential('agt-test-enroll','a'.repeat(64)).organization_id,store.DEFAULT_ORGANIZATION_ID);
   store.db.close();
 });
