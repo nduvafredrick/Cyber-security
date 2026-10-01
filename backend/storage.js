@@ -26,9 +26,9 @@ function readLegacy(name){
 function migrateLegacy(){
   if(db.prepare('SELECT COUNT(*) count FROM events').get().count===0){
     const legacy=readLegacy('events.json');
-    const stmt=db.prepare('INSERT OR IGNORE INTO events(id,organization_id,timestamp,severity,category,source_ip,message,hostname) VALUES (@id,@organization_id,@timestamp,@severity,@category,@source_ip,@message,@hostname)');
+    const stmt=db.prepare("INSERT OR IGNORE INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata) VALUES (@id,@organization_id,@timestamp,@severity,@category,@event_type,@source_ip,@message,@hostname,@metadata)");
     const tx=db.transaction(items=>items.slice(-10000).forEach(e=>stmt.run({...e,organization_id:DEFAULT_ORGANIZATION_ID})));
-    tx(legacy);
+    tx(legacy.map(e=>({...e,event_type:e.event_type||'generic',metadata:e.metadata||'{}'})));
   }
   if(db.prepare('SELECT COUNT(*) count FROM alerts').get().count===0){
     const stmt=db.prepare('INSERT OR IGNORE INTO alerts(id,organization_id,created_at,source_ip,severity,status,title,description,count,updated_at,updated_by,rule_key) VALUES (@id,@organization_id,@created_at,@source_ip,@severity,@status,@title,@description,@count,@updated_at,@updated_by,@rule_key)');
@@ -61,7 +61,7 @@ if(db.prepare('SELECT COUNT(*) count FROM detection_rules WHERE organization_id=
   seedDefaultRule(DEFAULT_ORGANIZATION_ID);
 }
 
-const insertEvent=db.prepare('INSERT OR REPLACE INTO events(id,organization_id,timestamp,severity,category,source_ip,message,hostname) VALUES (@id,@organization_id,@timestamp,@severity,@category,@source_ip,@message,@hostname)');
+const insertEvent=db.prepare("INSERT OR REPLACE INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata) VALUES (@id,@organization_id,@timestamp,@severity,@category,@event_type,@source_ip,@message,@hostname,@metadata)");
 const insertMany=db.transaction(items=>{for(const e of items)insertEvent.run(e)});
 
 function prune(){
@@ -257,6 +257,70 @@ function provisionOrganization(input){
   })();
 }
 function health(){db.prepare('SELECT 1').get();return true}
+function createAgent(input){
+  requireOrganization(input.organization_id);
+  const t=now();
+  db.prepare('INSERT INTO agents(id,organization_id,integration_id,name,status,created_by,created_at) VALUES (?,?,?,?,?,?,?)').run(input.id,input.organization_id,input.integration_id||null,input.name,'pending',input.created_by||null,t);
+  return getAgent(input.id,input.organization_id);
+}
+function getAgent(id,organizationId){
+  requireOrganization(organizationId);
+  return db.prepare('SELECT * FROM agents WHERE id=? AND organization_id=?').get(id,organizationId)||null;
+}
+function listAgents(organizationId){
+  requireOrganization(organizationId);
+  return db.prepare('SELECT * FROM agents WHERE organization_id=? ORDER BY created_at DESC').all(organizationId);
+}
+function createEnrollmentToken(agentId,organizationId,tokenHash,expiresAt){
+  requireOrganization(organizationId);
+  const agent=getAgent(agentId,organizationId); if(!agent)throw new Error('Agent not found');
+  const t=now();
+  db.prepare('INSERT INTO agent_enrollment_tokens(agent_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)').run(agentId,tokenHash,expiresAt,t);
+  return {agent_id:agentId,expires_at:expiresAt};
+}
+function enrollAgent(tokenHash,input){
+  const t=now();
+  return db.transaction(()=>{
+    const row=db.prepare('SELECT t.id,t.agent_id,t.expires_at,t.used_at,a.organization_id,a.integration_id,a.status FROM agent_enrollment_tokens t JOIN agents a ON a.id=t.agent_id WHERE t.token_hash=?').get(tokenHash);
+    if(!row||row.used_at||row.expires_at<=t)return null;
+    const claimed=db.prepare('UPDATE agent_enrollment_tokens SET used_at=? WHERE id=? AND used_at IS NULL').run(t,row.id);
+    if(claimed.changes!==1)return null;
+    db.prepare("UPDATE agents SET credential_hash=?,credential_prefix=?,status='active',version=?,hostname=?,os=?,enrolled_at=?,disabled_at=NULL WHERE id=?").run(input.credential_hash,input.credential_prefix,input.version||null,input.hostname||null,input.os||null,t,row.agent_id);
+    return getAgent(row.agent_id,row.organization_id);
+  })();
+}
+function getAgentByCredentialHash(credentialHash){
+  return db.prepare("SELECT * FROM agents WHERE credential_hash=? AND status='active'").get(credentialHash)||null;
+}
+function updateAgentHeartbeat(agentId,input){
+  const t=now();
+  db.prepare('UPDATE agents SET last_seen_at=?,last_heartbeat=?,version=COALESCE(?,version),hostname=COALESCE(?,hostname) WHERE id=? AND status=\'active\'').run(t,JSON.stringify(input),input.agent_version||null,input.hostname||null,agentId);
+  return db.prepare('SELECT * FROM agents WHERE id=?').get(agentId)||null;
+}
+function setAgentStatus(id,status,organizationId){
+  requireOrganization(organizationId);
+  const disabledAt=status==='disabled'?now():null;
+  db.prepare('UPDATE agents SET status=?,disabled_at=? WHERE id=? AND organization_id=?').run(status,disabledAt,id,organizationId);
+  return getAgent(id,organizationId);
+}
+function rotateAgent(id,organizationId){
+  requireOrganization(organizationId);
+  const t=now();
+  db.prepare("UPDATE agents SET credential_hash=NULL,credential_prefix=NULL,status='pending',disabled_at=NULL WHERE id=? AND organization_id=?").run(id,organizationId);
+  db.prepare('DELETE FROM agent_enrollment_tokens WHERE agent_id=?').run(id);
+  return getAgent(id,organizationId);
+}
+function deleteAgent(id,organizationId){
+  requireOrganization(organizationId);
+  return db.prepare('DELETE FROM agents WHERE id=? AND organization_id=?').run(id,organizationId).changes>0;
+}
+function claimIngestBatch(agentId,batchId,accepted){
+  const t=now();
+  const result=db.prepare('INSERT OR IGNORE INTO ingest_batches(agent_id,batch_id,received_at,accepted) VALUES(?,?,?,?)').run(agentId,batchId,t,accepted);
+  if(result.changes===1)return {duplicate:false,accepted};
+  return {duplicate:true,accepted:db.prepare('SELECT accepted FROM ingest_batches WHERE agent_id=? AND batch_id=?').get(agentId,batchId).accepted};
+}
+function incrementAgentEvents(agentId,count){db.prepare('UPDATE agents SET events_received=events_received+? WHERE id=?').run(count,agentId)}
 function close(){db.close()}
 module.exports={
   db,
@@ -290,6 +354,18 @@ module.exports={
   verifyIngestKey,
   createIngestKey,
   revokeIngestKey,
+  createAgent,
+  getAgent,
+  listAgents,
+  createEnrollmentToken,
+  enrollAgent,
+  getAgentByCredentialHash,
+  updateAgentHeartbeat,
+  setAgentStatus,
+  rotateAgent,
+  deleteAgent,
+  claimIngestBatch,
+  incrementAgentEvents,
   listRules,
   getRules,
   upsertRule,
