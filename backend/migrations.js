@@ -180,6 +180,7 @@ async function postgresMigrationV4(q){
 function sqliteMigrationV5(db){
   db.exec("ALTER TABLE events ADD COLUMN event_type TEXT NOT NULL DEFAULT 'generic'");
   db.exec("ALTER TABLE events ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'");
+  db.exec("ALTER TABLE events ADD COLUMN agent_id TEXT");
   db.exec("CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), integration_id TEXT REFERENCES integrations(id), name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','active','disabled')), credential_hash TEXT, credential_prefix TEXT, version TEXT, hostname TEXT, os TEXT, last_seen_at TEXT, last_heartbeat TEXT, events_received INTEGER NOT NULL DEFAULT 0, created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL, enrolled_at TEXT, disabled_at TEXT)");
   db.exec('CREATE INDEX IF NOT EXISTS idx_agents_org ON agents(organization_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_agents_integration ON agents(integration_id)');
@@ -192,6 +193,7 @@ function sqliteMigrationV5(db){
 async function postgresMigrationV5(q){
   await q("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'generic'");
   await q("ALTER TABLE events ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb");
+  await q("ALTER TABLE events ADD COLUMN IF NOT EXISTS agent_id TEXT");
   await q("CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,organization_id TEXT NOT NULL REFERENCES organizations(id),integration_id TEXT REFERENCES integrations(id),name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','active','disabled')),credential_hash TEXT,credential_prefix TEXT,version TEXT,hostname TEXT,os TEXT,last_seen_at TIMESTAMPTZ,last_heartbeat JSONB,events_received INTEGER NOT NULL DEFAULT 0,created_by INTEGER REFERENCES users(id),created_at TIMESTAMPTZ NOT NULL,enrolled_at TIMESTAMPTZ,disabled_at TIMESTAMPTZ)");
   await q('CREATE INDEX IF NOT EXISTS idx_agents_org ON agents(organization_id)');
   await q('CREATE INDEX IF NOT EXISTS idx_agents_integration ON agents(integration_id)');
