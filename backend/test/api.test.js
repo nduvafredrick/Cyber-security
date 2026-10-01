@@ -520,6 +520,7 @@ test('agent enrollment, heartbeat and batch ingest are organization-bound and id
   const base='http://127.0.0.1:'+server.address().port;
   const store=require('../storage');
   const security=require('../security');
+  const marker='agent contract telemetry '+Date.now().toString(36);
   const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
   assert.equal(login.status,200);
   const cookie=login.headers.get('set-cookie');
@@ -538,7 +539,7 @@ test('agent enrollment, heartbeat and batch ingest are organization-bound and id
   assert.equal(reused.status,401);
   const heartbeat=await fetch(base+'/api/agent/heartbeat',{method:'POST',headers:{authorization:'Bearer '+credential},body:JSON.stringify({agent_version:'0.1.0',timestamp:new Date().toISOString(),status:'ok',uptime_s:10,hostname:'contract-host',events_sent_total:0,queue_depth:0,errors_since_last:0})});
   assert.equal(heartbeat.status,200);
-  const batch={batch_id:'01JAGENTCONTRACT01',events:[{timestamp:new Date().toISOString(),source:'linux',category:'authentication',event_type:'login_failure',severity:'HIGH',host:'contract-host',source_ip:'10.0.0.7',message:'failed authentication',metadata:{user:'alice'}}]};
+  const batch={batch_id:'01JAGENTCONTRACT01',events:[{timestamp:new Date().toISOString(),source:'linux',category:'authentication',event_type:'login_failure',severity:'HIGH',host:'contract-host',source_ip:'10.0.0.7',message:marker,metadata:{user:'alice'}}]};
   const first=await fetch(base+'/api/ingest/events',{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify(batch)});
   assert.equal(first.status,200);
   assert.deepEqual(await first.json(),{batch_id:batch.batch_id,accepted:1,rejected:[],duplicate:false});
@@ -547,7 +548,7 @@ test('agent enrollment, heartbeat and batch ingest are organization-bound and id
   const duplicate=await second.json();
   assert.equal(duplicate.duplicate,true);
   assert.equal(duplicate.accepted,1);
-  const stored=await store.getEvents({organization_id:store.DEFAULT_ORGANIZATION_ID,search:'failed authentication',limit:10,offset:0});
+  const stored=await store.getEvents({organization_id:store.DEFAULT_ORGANIZATION_ID,search:marker,limit:10,offset:0});
   assert.equal(stored.total,1);
 });
 
