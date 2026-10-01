@@ -14,6 +14,7 @@ test.before(async()=>{
   process.env.DATA_DIR=dir;
   process.env.JWT_SECRET='api-test-secret';
   process.env.INGEST_API_KEY='api-test-ingest-key';
+  process.env.LOGIN_RATE_LIMIT_PER_WINDOW='100';
   process.env.INGEST_RATE_LIMIT_PER_MINUTE='300';
   process.env.BULK_INGEST_RATE_LIMIT_PER_MINUTE='60';
   process.env.ADMIN_USER='admin';
