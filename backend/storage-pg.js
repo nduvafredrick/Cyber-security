@@ -60,7 +60,7 @@ async function setIntegrationStatus(id,status,organizationId){
   await ensure();requireOrganization(organizationId);
   const rows=await sql.begin(async tx=>{
     const integration=await tx`UPDATE integrations SET status=${status},updated_at=NOW() WHERE id=${id} AND organization_id=${organizationId} RETURNING id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at`;
-    if(integration[0]?.ingest_key_id)await tx`UPDATE ingest_keys SET enabled=${status==='ACTIVE'} WHERE id=${integration[0].ingest_key_id}`;
+    if(integration[0]?.ingest_key_id){const active=status==='ACTIVE';await tx`UPDATE ingest_keys SET enabled=${active},revoked_at=${active?null:new Date().toISOString()} WHERE id=${integration[0].ingest_key_id}`;}
     return integration;
   });
   return rows[0]||null;
