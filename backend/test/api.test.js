@@ -479,9 +479,15 @@ test('admin can provision an organization-bound agent integration and its key in
   assert.equal((await listed.json()).integrations.some(x=>x.id===data.integration.id&&x.organization_id===data.integration.organization_id),true);
   const ingest=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':data.api_key},body:JSON.stringify({severity:'INFO',category:'agent',message:'agent telemetry',hostname:'branch-office'})});
   assert.equal(ingest.status,201);
-  const heartbeat=await fetch(base+'/api/agent/heartbeat',{method:'POST',headers:{'x-api-key':data.api_key}});
+  const agent=await fetch(base+'/api/agents',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'Branch Office Agent Runtime',integration_id:data.integration.id})});
+  assert.equal(agent.status,201);
+  const agentData=await agent.json();
+  const enrolled=await fetch(base+'/api/agent/enroll',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enrollment_token:agentData.enrollment_token,hostname:'branch-office',os:'linux',agent_version:'0.1.0'})});
+  assert.equal(enrolled.status,200);
+  const agentToken=(await enrolled.json()).credential;
+  const heartbeat=await fetch(base+'/api/agent/heartbeat',{method:'POST',headers:{authorization:'Bearer '+agentToken,'content-type':'application/json'},body:JSON.stringify({agent_version:'0.1.0',timestamp:new Date().toISOString(),status:'ok',uptime_s:10,hostname:'branch-office',events_sent_total:1,queue_depth:0,errors_since_last:0})});
   assert.equal(heartbeat.status,200);
-  assert.equal((await heartbeat.json()).status,'ok');
+  assert.equal((await heartbeat.json()).heartbeat_interval_s,30);
 });
 
 test('integration endpoints never expose another organization integration',async()=>{
@@ -527,7 +533,7 @@ test('agent enrollment, heartbeat and batch ingest are organization-bound and id
   const enrolled=await fetch(base+'/api/agent/enroll',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enrollment_token:agentData.enrollment_token,hostname:'contract-host',os:'linux',arch:'amd64',agent_version:'0.1.0'})});
   assert.equal(enrolled.status,200);
   const credential=(await enrolled.json()).credential;
-  assert.match(credential,/^sga_agt_[a-f0-9]{12}\\.[A-Za-z0-9_-]+$/);
+  assert.match(credential,/^sga_agt_[a-f0-9]{12}\.[A-Za-z0-9_-]+$/);
   const reused=await fetch(base+'/api/agent/enroll',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enrollment_token:agentData.enrollment_token,hostname:'contract-host',os:'linux',arch:'amd64',agent_version:'0.1.0'})});
   assert.equal(reused.status,401);
   const heartbeat=await fetch(base+'/api/agent/heartbeat',{method:'POST',headers:{authorization:'Bearer '+credential},body:JSON.stringify({agent_version:'0.1.0',timestamp:new Date().toISOString(),status:'ok',uptime_s:10,hostname:'contract-host',events_sent_total:0,queue_depth:0,errors_since_last:0})});
@@ -546,6 +552,7 @@ test('agent enrollment, heartbeat and batch ingest are organization-bound and id
 });
 
 test('agent cannot ingest events for another organization',async()=>{
+  const security=require('../security');
   const base='http://127.0.0.1:'+server.address().port;
   const store=require('../storage');
   const suffix=Date.now().toString(36);
