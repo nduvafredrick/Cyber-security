@@ -14,6 +14,7 @@ test.before(async()=>{
   process.env.DATA_DIR=dir;
   process.env.JWT_SECRET='api-test-secret';
   process.env.INGEST_API_KEY='api-test-ingest-key';
+  process.env.LOGIN_RATE_LIMIT_PER_15_MINUTES='100';
   process.env.INGEST_RATE_LIMIT_PER_MINUTE='300';
   process.env.BULK_INGEST_RATE_LIMIT_PER_MINUTE='60';
   process.env.LOGIN_RATE_LIMIT_PER_15_MINUTES='100';
@@ -231,8 +232,8 @@ test('isolates events, alerts, rules, audit records, users, and ingest keys betw
   const rawA=security.generateIngestKey();
   const rawB=security.generateIngestKey();
   const hash=(value)=>crypto.createHash('sha256').update(value).digest('hex');
-  const keyA=await store.createIngestKey({id:'key-a-'+suffix,name:'Company A connector',raw:rawA,hash:hash(rawA),created_by:userA.username,organization_id:organizationA.id});
-  const keyB=await store.createIngestKey({id:'key-b-'+suffix,name:'Company B connector',raw:rawB,hash:hash(rawB),created_by:userB.username,organization_id:organizationB.id});
+  const keyA=await store.createIngestKey({id:'key-a-'+suffix,name:'Company A connector',raw:rawA,hash:hash(rawA),created_by:'integration-a-'+suffix,organization_id:organizationA.id});
+  const keyB=await store.createIngestKey({id:'key-b-'+suffix,name:'Company B connector',raw:rawB,hash:hash(rawB),created_by:'integration-b-'+suffix,organization_id:organizationB.id});
   assert.equal(keyA.organization_id,organizationA.id);
   assert.equal(keyB.organization_id,organizationB.id);
   const ruleB=await store.upsertRule({
@@ -459,4 +460,51 @@ test('company onboarding rejects duplicate administrator email and invalid compa
     body:JSON.stringify({...payload,admin_email:'not-an-email',industry:'Not Real'})
   });
   assert.equal(invalid.status,400);
+});
+
+
+test('admin can provision an organization-bound agent integration and its key ingests telemetry',async()=>{
+  const base='http://127.0.0.1:'+server.address().port;
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  assert.equal(login.status,200);
+  const cookie=login.headers.get('set-cookie');
+  const created=await fetch(base+'/api/admin/integrations',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'Branch Office Agent',type:'agent',environment:'Production'})});
+  assert.equal(created.status,201);
+  const data=await created.json();
+  assert.equal(data.integration.name,'Branch Office Agent');
+  assert.equal(data.integration.type,'agent');
+  assert.match(data.api_key,/^sk_/);
+  const listed=await fetch(base+'/api/admin/integrations',{headers:{cookie}});
+  assert.equal((await listed.json()).integrations.some(x=>x.id===data.integration.id&&x.organization_id===data.integration.organization_id),true);
+  const ingest=await fetch(base+'/api/ingest/event',{method:'POST',headers:{'content-type':'application/json','x-api-key':data.api_key},body:JSON.stringify({severity:'INFO',category:'agent',message:'agent telemetry',hostname:'branch-office'})});
+  assert.equal(ingest.status,201);
+  const heartbeat=await fetch(base+'/api/agent/heartbeat',{method:'POST',headers:{'x-api-key':data.api_key}});
+  assert.equal(heartbeat.status,200);
+  assert.equal((await heartbeat.json()).status,'ok');
+});
+
+test('integration endpoints never expose another organization integration',async()=>{
+  const store=require('../storage');
+  const security=require('../security');
+  const base='http://127.0.0.1:'+server.address().port;
+  const suffix=Date.now().toString(36);
+  const orgA=await store.createOrganization({id:'integration-org-a-'+suffix,name:'Integration A',slug:'integration-a-'+suffix});
+  const orgB=await store.createOrganization({id:'integration-org-b-'+suffix,name:'Integration B',slug:'integration-b-'+suffix});
+  const passwordHash=bcrypt.hashSync('long-integration-password',4);
+  const userAId=await store.addUser({username:'integration-a-'+suffix,password_hash:passwordHash,role:'admin',organization_id:orgA.id});
+  const userBId=await store.addUser({username:'integration-b-'+suffix,password_hash:passwordHash,role:'admin',organization_id:orgB.id});
+  const tokenA=security.token({id:userAId,username:'integration-a-'+suffix,role:'admin',organization_id:orgA.id});
+  const tokenB=security.token({id:userBId,username:'integration-b-'+suffix,role:'admin',organization_id:orgB.id});
+  const first=await store.createIntegrationWithKey({id:'integration-a-'+suffix,organization_id:orgA.id,name:'Agent A',type:'agent',environment:'Production',key_id:'integration-key-a-'+suffix,key_raw:'sk_a_'+suffix,created_by:'integration-a-'+suffix});
+  const second=await store.createIntegrationWithKey({id:'integration-b-'+suffix,organization_id:orgB.id,name:'Agent B',type:'agent',environment:'Production',key_id:'integration-key-b-'+suffix,key_raw:'sk_b_'+suffix,created_by:'integration-b-'+suffix});
+  assert.equal(first.integration.organization_id,orgA.id);
+  assert.equal(second.integration.organization_id,orgB.id);
+  const listA=await fetch(base+'/api/admin/integrations',{headers:{authorization:'Bearer '+tokenA}});
+  const listB=await fetch(base+'/api/admin/integrations',{headers:{authorization:'Bearer '+tokenB}});
+  const dataA=await listA.json();
+  const dataB=await listB.json();
+  assert.equal(dataA.integrations.some(x=>x.id===second.integration.id),false);
+  assert.equal(dataB.integrations.some(x=>x.id===first.integration.id),false);
+  const cross=await fetch(base+'/api/admin/integrations/'+second.integration.id,{headers:{authorization:'Bearer '+tokenA}});
+  assert.equal(cross.status,404);
 });

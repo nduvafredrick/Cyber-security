@@ -27,6 +27,7 @@ const ingestRateLimit=rateLimit({windowMs:60000,keyGenerator:ingestClientKey,lim
 const ONBOARDING_INDUSTRIES=['Technology','Finance','Healthcare','Education','Retail','Manufacturing','Government','Non-profit','Other'];
 const ONBOARDING_COMPANY_SIZES=['1-10','11-50','51-200','201-500','501-1000','1000+'];
 const ONBOARDING_ENVIRONMENTS=['Production','Staging','Development'];
+const INTEGRATION_TYPES=['agent','syslog','http_api','ssh','cloud_api'];
 const onboardingRateLimit=rateLimit({windowMs:3600000,limit:5,standardHeaders:true,legacyHeaders:false,message:()=>({error:'Too many onboarding attempts. Please try again later.'})});
 function slugify(value){
   const base=String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60);
@@ -132,6 +133,50 @@ app.post('/api/admin/ingest-keys',security.auth,security.requireRole('admin'),as
 app.post('/api/admin/ingest-keys/rotate',security.auth,security.requireRole('admin'),async(req,res)=>{for(const existing of (await store.getIngestKeys(req.user.organization_id)).filter(k=>k.enabled))await store.revokeIngestKey(existing.id,req.user.organization_id);res.status(201).json(await issueIngestKey(req,req.body?.name||'rotated-key',req.body?.environment))});
 app.post('/api/admin/ingest-keys/:id/rotate',security.auth,security.requireRole('admin'),async(req,res)=>{const existing=(await store.getIngestKeys(req.user.organization_id)).find(k=>k.id===req.params.id);if(!existing)return res.status(404).json({error:'Key not found'});if(existing.enabled)await store.revokeIngestKey(existing.id,req.user.organization_id);res.status(201).json(await issueIngestKey(req,req.body?.name||existing.name,req.body?.environment||existing.environment))});
 app.delete('/api/admin/ingest-keys/:id',security.auth,security.requireRole('admin'),async(req,res)=>{const key=await store.revokeIngestKey(req.params.id,req.user.organization_id);if(!key)return res.status(404).json({error:'Key not found'});await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'INGEST_KEY_REVOKED',actor:req.user.username,target:key.id,status:'REVOKED'});res.json({key})});
+app.get('/api/admin/integrations',security.auth,security.requireRole('admin'),async(req,res)=>res.json({integrations:await store.listIntegrations(req.user.organization_id)}));
+app.post('/api/admin/integrations',security.auth,security.requireRole('admin'),async(req,res)=>{
+  try{
+    const name=String(req.body?.name||'').trim();
+    const type=String(req.body?.type||'');
+    const environment=String(req.body?.environment||'Production');
+    if(name.length<2||name.length>80)throw Error('Integration name must be 2-80 characters');
+    if(!INTEGRATION_TYPES.includes(type))throw Error('Invalid integration type');
+    if(!ONBOARDING_ENVIRONMENTS.includes(environment))throw Error('Invalid integration environment');
+    const raw=security.generateIngestKey();
+    const integrationId=crypto.randomUUID();
+    const keyId=crypto.randomUUID();
+    const result=await store.createIntegrationWithKey({
+      id:integrationId,
+      organization_id:req.user.organization_id,
+      name,
+      type,
+      environment,
+      key_id:keyId,
+      key_raw:raw,
+      key_hash:crypto.createHash('sha256').update(raw).digest('hex'),
+      created_by:req.user.username
+    });
+    await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'INTEGRATION_CREATED',actor:req.user.username,target:integrationId,status:type});
+    res.status(201).json({integration:result.integration,api_key:result.key.raw,endpoint:'/api/ingest/event'});
+  }catch(err){res.status(400).json({error:err.message})}
+});
+app.get('/api/admin/integrations/:id',security.auth,security.requireRole('admin'),async(req,res)=>{
+  const integration=await store.getIntegration(req.params.id,req.user.organization_id);
+  if(!integration)return res.status(404).json({error:'Integration not found'});
+  res.json({integration});
+});
+app.patch('/api/admin/integrations/:id',security.auth,security.requireRole('admin'),async(req,res)=>{
+  const status=req.body?.status;
+  if(!['ACTIVE','DISABLED'].includes(status))return res.status(400).json({error:'Invalid integration status'});
+  const integration=await store.setIntegrationStatus(req.params.id,status,req.user.organization_id);
+  if(!integration)return res.status(404).json({error:'Integration not found'});
+  await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'INTEGRATION_STATUS_CHANGE',actor:req.user.username,target:integration.id,status});
+  res.json({integration});
+});
+app.post('/api/agent/heartbeat',security.apiKey,async(req,res)=>{
+  const integration=await store.getIntegrationByIngestKey?.(req.ingestKey.id);
+  res.json({status:'ok',integration_id:integration?.id||null});
+});
 app.get('/api/admin/detection-rules',security.auth,security.requireRole('admin'),async(req,res)=>res.json({rules:await store.listRules(req.user.organization_id)}));
 app.put('/api/admin/detection-rules/:ruleKey',security.auth,security.requireRole('admin'),async(req,res)=>{try{const body=req.body||{},rule={rule_key:String(req.params.ruleKey).trim(),name:String(body.name||'').slice(0,100),description:String(body.description||'').slice(0,500),enabled:body.enabled!==false,window_ms:Number(body.window_ms),threshold:Number(body.threshold),severities:Array.isArray(body.severities)?body.severities:[],categories:Array.isArray(body.categories)?body.categories.map(String):[],message_pattern:String(body.message_pattern||''),alert_severity:String(body.alert_severity||'HIGH').toUpperCase(),title:String(body.title||'Detection rule').slice(0,150)};if(!rule.rule_key||!rule.name||rule.window_ms<1000||rule.window_ms>86400000||!Number.isInteger(rule.threshold)||rule.threshold<1||rule.threshold>10000)throw Error('Invalid rule configuration');if(!['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(rule.alert_severity))throw Error('Invalid alert severity');if(!rule.severities.every(x=>['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(x)))throw Error('Invalid event severity');const patternMatch=rule.message_pattern.match(/^\/(.*)\/([a-z]*)$/i);new RegExp(patternMatch?patternMatch[1]:rule.message_pattern,patternMatch?patternMatch[2]:'');const saved=await store.upsertRule(rule,req.user.username,req.user.organization_id);await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'DETECTION_RULE_UPDATED',actor:req.user.username,target:rule.rule_key,status:rule.enabled?'ENABLED':'DISABLED'});res.json({rule:{...saved,enabled:Boolean(saved.enabled),severities:Array.isArray(saved.severities)?saved.severities:JSON.parse(saved.severities),categories:Array.isArray(saved.categories)?saved.categories:JSON.parse(saved.categories)}})}catch(err){res.status(400).json({error:err.message})}});
 app.post('/api/ingest/event',security.apiKey,ingestRateLimit,async(req,res)=>{try{const e=normalize(req.body);const alert=await processEvent(e,req.ingestKey.organization_id);res.status(201).json({event:{...e,organization_id:req.ingestKey.organization_id},alert})}catch(err){logger.warn('event_rejected',{error:err.message});res.status(400).json({error:err.message})}});

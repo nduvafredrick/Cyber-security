@@ -132,7 +132,7 @@ test('legacy SQLite data migrates into the default organization',()=>{
   assert.equal(db.prepare('SELECT organization_id FROM events WHERE id=?').get('legacy-event').organization_id,DEFAULT_ORGANIZATION_ID);
   assert.equal(db.prepare('SELECT organization_id FROM users WHERE username=?').get('legacy-admin').organization_id,DEFAULT_ORGANIZATION_ID);
   assert.equal(db.prepare('SELECT organization_id FROM detection_rules WHERE rule_key=?').get('legacy-rule').organization_id,DEFAULT_ORGANIZATION_ID);
-  assert.deepEqual(db.prepare('SELECT version FROM _schema_migrations ORDER BY version').all().map(x=>x.version),[1,2,3]);
+  assert.deepEqual(db.prepare('SELECT version FROM _schema_migrations ORDER BY version').all().map(x=>x.version),[1,2,3,4]);
   db.close();
 });
 
@@ -159,5 +159,25 @@ test('SQLite organization provisioning creates the administrator and connector a
   assert.equal(store.getIngestKeys('org-provision-test')[0].organization_id,'org-provision-test');
   assert.equal(store.listRules('org-provision-test').length,1);
   assert.equal(store.getAudit('org-provision-test')[0].action,'ORGANIZATION_CREATED');
+  store.db.close();
+});
+
+test('SQLite integration provisioning binds the connector to one organization',()=>{
+  const {store}=makeStore();
+  const result=store.createIntegrationWithKey({
+    id:'integration-test',
+    organization_id:store.DEFAULT_ORGANIZATION_ID,
+    name:'Test Sentinel Agent',
+    type:'agent',
+    environment:'Production',
+    key_id:'integration-key-test',
+    key_raw:'sk_integration-test',
+    created_by:'admin'
+  });
+  assert.equal(result.integration.organization_id,store.DEFAULT_ORGANIZATION_ID);
+  assert.equal(result.integration.type,'agent');
+  assert.equal(result.key.key_id,'integration-key-test');
+  assert.equal(store.listIntegrations(store.DEFAULT_ORGANIZATION_ID).length,1);
+  assert.equal(store.getIntegration('integration-test',store.DEFAULT_ORGANIZATION_ID).name,'Test Sentinel Agent');
   store.db.close();
 });

@@ -94,10 +94,17 @@ function sqliteMigrationV3(db){
   ].join(';\n'));
 }
 
+function sqliteMigrationV4(db){
+  db.exec('CREATE TABLE IF NOT EXISTS integrations (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN (\'agent\',\'syslog\',\'http_api\',\'ssh\',\'cloud_api\')), environment TEXT NOT NULL DEFAULT \'Production\', status TEXT NOT NULL DEFAULT \'ACTIVE\' CHECK(status IN (\'ACTIVE\',\'DISABLED\')), ingest_key_id TEXT REFERENCES ingest_keys(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_seen_at TEXT)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_integrations_org_created ON integrations(organization_id,created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_integrations_org_status ON integrations(organization_id,status)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_integrations_ingest_key ON integrations(ingest_key_id)');
+}
+
 function runSqliteMigrations(db){
   db.exec('CREATE TABLE IF NOT EXISTS _schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)');
   const applied=new Set(db.prepare('SELECT version FROM _schema_migrations').all().map(row=>row.version));
-  const migrations=[[1,sqliteMigrationV1],[2,sqliteMigrationV2],[3,sqliteMigrationV3]];
+  const migrations=[[1,sqliteMigrationV1],[2,sqliteMigrationV2],[3,sqliteMigrationV3],[4,sqliteMigrationV4]];
   for(const [version,migration] of migrations){
     if(applied.has(version))continue;
     migration(db);
@@ -163,10 +170,17 @@ async function postgresMigrationV3(q){
   await q("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email) WHERE email IS NOT NULL");
 }
 
+async function postgresMigrationV4(q){
+  await q("CREATE TABLE IF NOT EXISTS integrations(id TEXT PRIMARY KEY,organization_id TEXT NOT NULL REFERENCES organizations(id),name TEXT NOT NULL,type TEXT NOT NULL CHECK(type IN ('agent','syslog','http_api','ssh','cloud_api')),environment TEXT NOT NULL DEFAULT 'Production',status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','DISABLED')),ingest_key_id TEXT REFERENCES ingest_keys(id),created_at TIMESTAMPTZ NOT NULL,updated_at TIMESTAMPTZ NOT NULL,last_seen_at TIMESTAMPTZ)");
+  await q('CREATE INDEX IF NOT EXISTS idx_integrations_org_created ON integrations(organization_id,created_at DESC)');
+  await q('CREATE INDEX IF NOT EXISTS idx_integrations_org_status ON integrations(organization_id,status)');
+  await q('CREATE INDEX IF NOT EXISTS idx_integrations_ingest_key ON integrations(ingest_key_id)');
+}
+
 async function runPostgresMigrations(q){
   await q('CREATE TABLE IF NOT EXISTS _schema_migrations(version INTEGER PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL)');
   const applied=new Set((await q('SELECT version FROM _schema_migrations')).map(row=>Number(row.version)));
-  const migrations=[[1,postgresMigrationV1],[2,postgresMigrationV2],[3,postgresMigrationV3]];
+  const migrations=[[1,postgresMigrationV1],[2,postgresMigrationV2],[3,postgresMigrationV3],[4,postgresMigrationV4]];
   for(const [version,migration] of migrations){
     if(applied.has(version))continue;
     await migration(q);
