@@ -217,6 +217,7 @@ async function prune(){
   await q('DELETE FROM events WHERE timestamp<$1',[cut]);
   await q('DELETE FROM alerts WHERE id IN(SELECT id FROM alerts ORDER BY created_at DESC OFFSET 5000)');
   await q('DELETE FROM audit WHERE id IN(SELECT id FROM audit ORDER BY timestamp DESC OFFSET 5000)');
+  await q("DELETE FROM ingest_batches WHERE received_at < NOW() - INTERVAL '7 days'");
 }
 async function health(){await ensure();await q('SELECT 1');return true;}
 async function createAgent(input){await ensure();requireOrganization(input.organization_id);const t=new Date().toISOString();await q('INSERT INTO agents(id,organization_id,integration_id,name,status,created_by,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[input.id,input.organization_id,input.integration_id||null,input.name,'pending',input.created_by||null,t]);return getAgent(input.id,input.organization_id)}
