@@ -29,6 +29,8 @@ const ONBOARDING_COMPANY_SIZES=['1-10','11-50','51-200','201-500','501-1000','10
 const ONBOARDING_ENVIRONMENTS=['Production','Staging','Development'];
 const INTEGRATION_TYPES=['agent','syslog','http_api','ssh','cloud_api'];
 const onboardingRateLimit=rateLimit({windowMs:3600000,limit:5,standardHeaders:true,legacyHeaders:false,message:()=>({error:'Too many onboarding attempts. Please try again later.'})});
+const agentEnrollmentRateLimit=rateLimit({windowMs:60000,limit:config.agentEnrollmentRateLimitPerMinute,standardHeaders:true,legacyHeaders:false,keyGenerator:req=>req.ip,message:()=>({error:'Too many enrollment attempts. Please try again later.'})});
+const agentIngestRateLimit=rateLimit({windowMs:1000,limit:config.agentIngestRateLimitPerSecond,standardHeaders:true,legacyHeaders:false,keyGenerator:req=>req.agent?.id||req.ip,message:()=>({error:'Agent ingestion rate limit exceeded',request_id:req.requestId})});
 function slugify(value){
   const base=String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60);
   return (base||'company')+'-'+crypto.randomBytes(3).toString('hex');
@@ -176,6 +178,104 @@ app.patch('/api/admin/integrations/:id',security.auth,security.requireRole('admi
 app.post('/api/agent/heartbeat',security.apiKey,async(req,res)=>{
   const integration=await store.getIntegrationByIngestKey?.(req.ingestKey.id);
   res.json({status:'ok',integration_id:integration?.id||null});
+});
+function agentHealth(agent){
+  if(agent.status==='pending')return 'pending';
+  if(agent.status==='disabled')return 'disabled';
+  if(!agent.last_seen_at)return 'offline';
+  const age=Date.now()-Date.parse(agent.last_seen_at);
+  if(age>300000)return 'offline';
+  if(age>90000)return 'stale';
+  let heartbeat=agent.last_heartbeat;
+  if(typeof heartbeat==='string'){try{heartbeat=JSON.parse(heartbeat)}catch{heartbeat=null}}
+  if(heartbeat?.status==='degraded'||heartbeat?.status==='error'||Number(heartbeat?.queue_depth||0)>1000)return 'degraded';
+  return 'online';
+}
+function publicAgent(agent){const {credential_hash,last_heartbeat,...safe}=agent;return {...safe,health:agentHealth(agent)}}
+function makeEnrollmentToken(){return 'sge_'+crypto.randomBytes(32).toString('base64url')}
+function makeAgentCredential(agentId){const secret=crypto.randomBytes(32).toString('base64url');return {credential:'sga_'+agentId+'.'+secret,secret}}
+function validateAgentEvent(input){
+  if(!input||typeof input!=='object'||Array.isArray(input))throw Error('Event must be an object');
+  const timestamp=String(input.timestamp||'');
+  if(!/^\\d{4}-\\d{2}-\\d{2}T/.test(timestamp)||Number.isNaN(Date.parse(timestamp)))throw Error('Invalid timestamp');
+  if(Date.parse(timestamp)>Date.now()+86400000)throw Error('Timestamp is too far in the future');
+  const source=String(input.source||'');
+  if(!['linux','windows','syslog','app','other'].includes(source))throw Error('Invalid source');
+  const category=String(input.category||'');
+  if(!['authentication','system','network','malware','application','other'].includes(category))throw Error('Invalid category');
+  const eventType=String(input.event_type||'');
+  if(!/^[a-z0-9_]{1,64}$/.test(eventType))throw Error('Invalid event_type');
+  const severity=String(input.severity||'').toUpperCase();
+  if(!['LOW','MEDIUM','HIGH','CRITICAL'].includes(severity))throw Error('Invalid severity');
+  const hostname=String(input.host||'').trim();
+  if(!hostname||hostname.length>255)throw Error('Invalid host');
+  const message=String(input.message||'');
+  if(!message||message.length>8192)throw Error('Invalid message');
+  const sourceIp=input.source_ip==null?'unknown':String(input.source_ip);
+  if(sourceIp!=='unknown'&&net.isIP(sourceIp)===0)throw Error('Invalid source_ip');
+  const metadata=input.metadata==null?{}:input.metadata;
+  if(!metadata||typeof metadata!=='object'||Array.isArray(metadata)||JSON.stringify(metadata).length>16384)throw Error('Invalid metadata');
+  return {id:crypto.randomUUID(),timestamp:new Date(timestamp).toISOString(),severity,category,event_type:eventType,source_ip:sourceIp,message,hostname,metadata};
+}
+app.post('/api/agents',security.auth,security.requireRole('admin'),async(req,res)=>{
+  try{
+    const name=String(req.body?.name||'').trim();
+    if(name.length<2||name.length>80)throw Error('Agent name must be 2-80 characters');
+    const integrationId=req.body?.integration_id?String(req.body.integration_id):null;
+    let integration=null;
+    if(integrationId){integration=await store.getIntegration(integrationId,req.user.organization_id);if(!integration||integration.type!=='agent')return res.status(404).json({error:'Agent integration not found'})}
+    const agentId='agt_'+crypto.randomBytes(6).toString('hex');
+    const enrollmentToken=makeEnrollmentToken();
+    const expiresAt=new Date(Date.now()+86400000).toISOString();
+    const agent=await store.createAgent({id:agentId,organization_id:req.user.organization_id,integration_id:integrationId,name,created_by:req.user.id});
+    await store.createEnrollmentToken(agent.id,req.user.organization_id,crypto.createHash('sha256').update(enrollmentToken).digest('hex'),expiresAt);
+    await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'agent.created',actor:req.user.username,target:agent.id,status:'pending'});
+    res.status(201).json({agent:publicAgent(agent),enrollment_token:enrollmentToken,expires_at:expiresAt});
+  }catch(err){res.status(400).json({error:err.message})}
+});
+app.get('/api/agents',security.auth,security.requireRole('admin'),async(req,res)=>res.json({agents:(await store.listAgents(req.user.organization_id)).map(publicAgent)}));
+app.get('/api/agents/:id',security.auth,security.requireRole('admin'),async(req,res)=>{const agent=await store.getAgent(req.params.id,req.user.organization_id);if(!agent)return res.status(404).json({error:'Agent not found'});res.json({agent:publicAgent(agent)})});
+app.post('/api/agents/:id/disable',security.auth,security.requireRole('admin'),async(req,res)=>{const agent=await store.setAgentStatus(req.params.id,'disabled',req.user.organization_id);if(!agent)return res.status(404).json({error:'Agent not found'});await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'agent.disabled',actor:req.user.username,target:agent.id,status:'disabled'});res.json({agent:publicAgent(agent)})});
+app.post('/api/agents/:id/enable',security.auth,security.requireRole('admin'),async(req,res)=>{const agent=await store.setAgentStatus(req.params.id,'active',req.user.organization_id);if(!agent)return res.status(404).json({error:'Agent not found'});await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'agent.enabled',actor:req.user.username,target:agent.id,status:'active'});res.json({agent:publicAgent(agent)})});
+app.post('/api/agents/:id/rotate',security.auth,security.requireRole('admin'),async(req,res)=>{const agent=await store.rotateAgent(req.params.id,req.user.organization_id);if(!agent)return res.status(404).json({error:'Agent not found'});const token=makeEnrollmentToken();const expiresAt=new Date(Date.now()+86400000).toISOString();await store.createEnrollmentToken(agent.id,req.user.organization_id,crypto.createHash('sha256').update(token).digest('hex'),expiresAt);await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'agent.rotated',actor:req.user.username,target:agent.id,status:'pending'});res.json({agent:publicAgent(agent),enrollment_token:token,expires_at:expiresAt})});
+app.delete('/api/agents/:id',security.auth,security.requireRole('admin'),async(req,res)=>{const agent=await store.getAgent(req.params.id,req.user.organization_id);if(!agent)return res.status(404).json({error:'Agent not found'});await store.deleteAgent(agent.id,req.user.organization_id);await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'agent.deleted',actor:req.user.username,target:agent.id,status:'DELETED'});res.status(204).end()});
+app.post('/api/agent/enroll',agentEnrollmentRateLimit,async(req,res)=>{
+  try{
+    const token=String(req.body?.enrollment_token||'');
+    const hostname=String(req.body?.hostname||'').slice(0,255);
+    const os=String(req.body?.os||'').slice(0,32);
+    const version=String(req.body?.agent_version||'').slice(0,32);
+    const agentIdHint=null;
+    if(!token||!hostname||!os||!version)return res.status(401).json({error:'invalid_enrollment_token'});
+    const secret=makeAgentCredential(agentIdHint||'pending');
+    const hashToken=crypto.createHash('sha256').update(token).digest('hex');
+    const parsedAgentId=token.match(/^sge_/)?null:null;
+    // Enrollment credential is generated after resolving the token; storage requires the agent id for the final credential string.
+    const tokenRow=await store.getEnrollmentToken?.(hashToken);
+    if(!tokenRow)return res.status(401).json({error:'invalid_enrollment_token'});
+    const credential=makeAgentCredential(tokenRow.agent_id);
+    const agent=await store.enrollAgent(hashToken,{credential_hash:crypto.createHash('sha256').update(credential.secret).digest('hex'),credential_prefix:credential.credential.slice(0,8),version,hostname,os});
+    if(!agent)return res.status(401).json({error:'invalid_enrollment_token'});
+    await store.addAudit({id:crypto.randomUUID(),organization_id:agent.organization_id,timestamp:new Date().toISOString(),action:'agent.enrolled',actor:'agent',target:agent.id,status:req.ip});
+    res.json({agent_id:agent.id,organization_id:agent.organization_id,integration_id:agent.integration_id,credential:credential.credential,heartbeat_interval_s:30,limits:{max_batch_events:500,max_body_bytes:1048576}});
+  }catch(err){res.status(401).json({error:'invalid_enrollment_token'})}
+});
+app.post('/api/agent/heartbeat',security.agentCredential,async(req,res)=>{const body=req.body||{};const status=['ok','degraded','error'].includes(body.status)?body.status:'error';const heartbeat={agent_version:String(body.agent_version||'').slice(0,32),timestamp:body.timestamp||null,status,uptime_s:Number(body.uptime_s)||0,hostname:String(body.hostname||'').slice(0,255),events_sent_total:Number(body.events_sent_total)||0,queue_depth:Number(body.queue_depth)||0,errors_since_last:Number(body.errors_since_last)||0,last_error:body.last_error?String(body.last_error).slice(0,1000):null};const agent=await store.updateAgentHeartbeat(req.agent.id,heartbeat);if(!agent)return res.status(403).json({error:'Agent disabled'});if(agent.integration_id)await store.touchIntegration(agent.integration_id,agent.organization_id);res.json({server_time:new Date().toISOString(),heartbeat_interval_s:30,config_version:1,commands:[]})});
+app.post('/api/ingest/events',security.agentCredential,agentIngestRateLimit,async(req,res)=>{
+  try{
+    const body=req.body||{};
+    const batchId=String(body.batch_id||'');
+    if(!/^[A-Za-z0-9_-]{10,128}$/.test(batchId))return res.status(400).json({error:{code:'invalid_batch_id',message:'batch_id is required'}});
+    if(!Array.isArray(body.events)||body.events.length<1)return res.status(400).json({error:{code:'invalid_batch',message:'events must contain at least one event'}});
+    if(body.events.length>500)return res.status(413).json({error:{code:'batch_too_large',message:'Maximum 500 events per batch'}});
+    const claimed=await store.claimIngestBatch(req.agent.id,batchId,body.events.length);
+    if(claimed.duplicate)return res.json({batch_id:batchId,accepted:claimed.accepted,rejected:[],duplicate:true});
+    const accepted=[];const rejected=[];
+    body.events.forEach((item,index)=>{try{accepted.push({...validateAgentEvent(item),organization_id:req.agent.organization_id,agent_id:req.agent.id})}catch(err){rejected.push({index,error:err.message})}});
+    if(accepted.length){await store.addEvents(accepted);await store.incrementAgentEvents(req.agent.id,accepted.length);for(const e of accepted){const recent=await store.getRecentEvents(req.agent.organization_id,e.source_ip,new Date(Date.now()-300000).toISOString());const a=detection.evaluate(e,recent,await store.getRules(req.agent.organization_id));if(a&&!await store.getActiveAlert(req.agent.organization_id,a.rule_key,a.source_ip)){const alert={...a,organization_id:req.agent.organization_id};await store.addAlert(alert);metrics.alerts_created++;broadcast({type:'alert',alert},false,req.agent.organization_id)}metrics.events_ingested++;broadcast({type:'event',event:e},true,req.agent.organization_id)}}
+    if(req.agent.integration_id)await store.touchIntegration(req.agent.integration_id,req.agent.organization_id);
+    res.json({batch_id:batchId,accepted:accepted.length,rejected,duplicate:false});
+  }catch(err){logger.warn('agent_batch_rejected',{error:err.message,agent_id:req.agent?.id||null});res.status(400).json({error:{code:'invalid_batch',message:err.message}})}
 });
 app.get('/api/admin/detection-rules',security.auth,security.requireRole('admin'),async(req,res)=>res.json({rules:await store.listRules(req.user.organization_id)}));
 app.put('/api/admin/detection-rules/:ruleKey',security.auth,security.requireRole('admin'),async(req,res)=>{try{const body=req.body||{},rule={rule_key:String(req.params.ruleKey).trim(),name:String(body.name||'').slice(0,100),description:String(body.description||'').slice(0,500),enabled:body.enabled!==false,window_ms:Number(body.window_ms),threshold:Number(body.threshold),severities:Array.isArray(body.severities)?body.severities:[],categories:Array.isArray(body.categories)?body.categories.map(String):[],message_pattern:String(body.message_pattern||''),alert_severity:String(body.alert_severity||'HIGH').toUpperCase(),title:String(body.title||'Detection rule').slice(0,150)};if(!rule.rule_key||!rule.name||rule.window_ms<1000||rule.window_ms>86400000||!Number.isInteger(rule.threshold)||rule.threshold<1||rule.threshold>10000)throw Error('Invalid rule configuration');if(!['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(rule.alert_severity))throw Error('Invalid alert severity');if(!rule.severities.every(x=>['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(x)))throw Error('Invalid event severity');const patternMatch=rule.message_pattern.match(/^\/(.*)\/([a-z]*)$/i);new RegExp(patternMatch?patternMatch[1]:rule.message_pattern,patternMatch?patternMatch[2]:'');const saved=await store.upsertRule(rule,req.user.username,req.user.organization_id);await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'DETECTION_RULE_UPDATED',actor:req.user.username,target:rule.rule_key,status:rule.enabled?'ENABLED':'DISABLED'});res.json({rule:{...saved,enabled:Boolean(saved.enabled),severities:Array.isArray(saved.severities)?saved.severities:JSON.parse(saved.severities),categories:Array.isArray(saved.categories)?saved.categories:JSON.parse(saved.categories)}})}catch(err){res.status(400).json({error:err.message})}});
