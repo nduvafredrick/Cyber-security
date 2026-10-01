@@ -79,7 +79,7 @@ jobs:
             sleep 2
           done
           docker logs sentinel-ci
-          exit 1
+          curl -fsS http://127.0.0.1:3001/ready
       - name: Cache Playwright browsers
         uses: actions/cache@v6
         with:
