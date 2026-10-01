@@ -48,3 +48,26 @@ test('Events view supports search and severity filtering',async()=>{
   assert.equal(await page.getByLabel('Filter severity').inputValue(),'HIGH');
   await page.close();
 });
+
+test('Company onboarding provisions a workspace and verifies its first event',async()=>{
+  const page=await browser.newPage();
+  await page.goto('http://127.0.0.1:3002/onboarding',{waitUntil:'domcontentloaded'});
+  await page.getByRole('heading',{name:'Create your Sentinel workspace'}).waitFor({state:'visible',timeout:10000});
+  await page.getByLabel('Company name').fill('Browser Test '+Date.now());
+  await page.getByRole('button',{name:'Continue to administrator'}).click();
+  const email='browser-'+Date.now()+'@example.com';
+  await page.getByLabel('Work email').fill(email);
+  await page.getByRole('textbox',{name:'Password',exact:true}).fill('browser-onboarding-password');
+  await page.getByLabel('Confirm password').fill('browser-onboarding-password');
+  await page.getByRole('button',{name:'Continue to connector'}).click();
+  await page.getByLabel('Connector name').fill('Browser Test Connector');
+  await page.getByLabel('Environment').selectOption('Staging');
+  await page.getByRole('button',{name:'Create workspace'}).click();
+  await page.getByText('WORKSPACE CREATED').waitFor({state:'visible',timeout:10000});
+  await page.getByRole('button',{name:'Reveal key'}).click();
+  await page.getByRole('button',{name:'Send a test event'}).click();
+  await page.getByRole('button',{name:'Test event received'}).waitFor({state:'visible',timeout:10000});
+  await page.getByRole('button',{name:'Open Sentinel'}).click();
+  await page.getByRole('heading',{name:'Overview'}).waitFor({state:'visible',timeout:10000});
+  await page.close();
+});

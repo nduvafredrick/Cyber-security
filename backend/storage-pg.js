@@ -11,11 +11,11 @@ const q=(text,values=[])=>sql.unsafe(text,values);
 const ready=(async()=>{
   await runPostgresMigrations(q);
   if(adminPasswordHash){
-    await q('INSERT INTO users(organization_id,username,password_hash,role,enabled,created_at,updated_at) VALUES($1,$2,$3,$4,TRUE,NOW(),NOW()) ON CONFLICT(username) DO NOTHING',[DEFAULT_ORGANIZATION_ID,adminUser,adminPasswordHash,'admin']);
+    await q('INSERT INTO users(organization_id,username,email,password_hash,role,enabled,created_at,updated_at) VALUES($1,$2,$3,$4,$5,TRUE,NOW(),NOW()) ON CONFLICT(username) DO NOTHING',[DEFAULT_ORGANIZATION_ID,adminUser,null,adminPasswordHash,'admin']);
   }
   if(ingestKey){
     const h=crypto.createHash('sha256').update(ingestKey).digest('hex');
-    await q('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,enabled,created_at,created_by) SELECT $1,$2,$3,$4,$5,TRUE,NOW(),$6 WHERE NOT EXISTS(SELECT 1 FROM ingest_keys)',[crypto.randomUUID(),DEFAULT_ORGANIZATION_ID,'bootstrap',h,ingestKey.slice(0,8),adminUser]);
+    await q('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,created_by) SELECT $1,$2,$3,$4,$5,$6,TRUE,NOW(),$7 WHERE NOT EXISTS(SELECT 1 FROM ingest_keys)',[crypto.randomUUID(),DEFAULT_ORGANIZATION_ID,'bootstrap',h,ingestKey.slice(0,8),'Production',adminUser]);
   }
   await q('INSERT INTO detection_rules(organization_id,rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by) VALUES($1,$2,$3,$4,TRUE,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,NOW(),$12) ON CONFLICT(organization_id,rule_key) DO NOTHING',[DEFAULT_ORGANIZATION_ID,'auth-bruteforce-v1','Authentication brute force','Repeated failed authentication attempts from one source.',300000,5,'["HIGH","CRITICAL"]','["ssh","login","authentication"]','/failed|invalid|denied/i','CRITICAL','Possible brute-force authentication attack','system']);
 })();
@@ -26,8 +26,13 @@ function requireOrganization(organizationId){
 async function createOrganization(organization){
   const t=new Date().toISOString();
   await ensure();
-  const rows=await q('INSERT INTO organizations(id,name,slug,created_at,updated_at) VALUES($1,$2,$3,$4,$4) RETURNING *',[organization.id,organization.name,organization.slug,t]);
+  const rows=await q('INSERT INTO organizations(id,name,slug,industry,company_size,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$6) RETURNING *',[organization.id,organization.name,organization.slug,organization.industry||'Other',organization.company_size||'Unknown',t]);
   return rows[0];
+}
+async function getOrganization(organizationId){
+  await ensure();requireOrganization(organizationId);
+  const rows=await q('SELECT * FROM organizations WHERE id=$1',[organizationId]);
+  return rows[0]||null;
 }
 async function getEvents(o={}){
   await ensure();
@@ -68,16 +73,16 @@ async function getAudit(organizationId){
 }
 async function getUser(username){
   await ensure();
-  const rows=await q('SELECT id,organization_id,username,password_hash,role,enabled,created_at,updated_at FROM users WHERE username=$1 AND enabled=TRUE',[username]);
+  const rows=await q('SELECT id,organization_id,username,email,password_hash,role,enabled,created_at,updated_at FROM users WHERE (username=$1 OR email=$1) AND enabled=TRUE ORDER BY id LIMIT 1',[username]);
   return rows[0]||null;
 }
 async function listUsers(organizationId){
   await ensure();requireOrganization(organizationId);
-  return q('SELECT id,organization_id,username,role,enabled,created_at,updated_at FROM users WHERE organization_id=$1 ORDER BY username',[organizationId]);
+  return q('SELECT id,organization_id,username,email,role,enabled,created_at,updated_at FROM users WHERE organization_id=$1 ORDER BY username',[organizationId]);
 }
 async function addUser(user){
   await ensure();requireOrganization(user.organization_id);
-  const rows=await q('INSERT INTO users(organization_id,username,password_hash,role,enabled,created_at,updated_at) VALUES($1,$2,$3,$4,TRUE,NOW(),NOW()) RETURNING id',[user.organization_id,user.username,user.password_hash,user.role]);
+  const rows=await q('INSERT INTO users(organization_id,username,email,password_hash,role,enabled,created_at,updated_at) VALUES($1,$2,$3,$4,$5,TRUE,NOW(),NOW()) RETURNING id',[user.organization_id,user.username,user.email||null,user.password_hash,user.role]);
   return rows[0].id;
 }
 async function setUserEnabled(id,enabled,organizationId){
@@ -87,7 +92,7 @@ async function setUserEnabled(id,enabled,organizationId){
 }
 async function getIngestKeys(organizationId){
   await ensure();requireOrganization(organizationId);
-  return q('SELECT id,organization_id,name,key_prefix,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys WHERE organization_id=$1 ORDER BY created_at DESC',[organizationId]);
+  return q('SELECT id,organization_id,name,key_prefix,environment,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by FROM ingest_keys WHERE organization_id=$1 ORDER BY created_at DESC',[organizationId]);
 }
 async function verifyIngestKey(raw){
   await ensure();
@@ -100,13 +105,13 @@ async function verifyIngestKey(raw){
 async function createIngestKey(key){
   await ensure();requireOrganization(key.organization_id);
   const t=new Date().toISOString();
-  await q('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,enabled,created_at,last_used_at,created_by) VALUES($1,$2,$3,$4,$5,TRUE,$6,NULL,$7)',[key.id,key.organization_id,key.name,key.hash,key.raw.slice(0,8),t,key.created_by]);
+  await q('INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,last_used_at,created_by) VALUES($1,$2,$3,$4,$5,$6,TRUE,$7,NULL,$8)',[key.id,key.organization_id,key.name,key.hash,key.raw.slice(0,8),key.environment||'Production',t,key.created_by]);
   return {id:key.id,organization_id:key.organization_id,name:key.name,key_prefix:key.raw.slice(0,8),created_at:t};
 }
 async function revokeIngestKey(id,organizationId){
   await ensure();requireOrganization(organizationId);
   const t=new Date().toISOString();
-  const rows=await q('UPDATE ingest_keys SET enabled=FALSE,revoked_at=$1,rotated_at=$1 WHERE id=$2 AND organization_id=$3 RETURNING id,organization_id,name,key_prefix,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by',[t,id,organizationId]);
+  const rows=await q('UPDATE ingest_keys SET enabled=FALSE,revoked_at=$1,rotated_at=$1 WHERE id=$2 AND organization_id=$3 RETURNING id,organization_id,name,key_prefix,environment,enabled,created_at,rotated_at,revoked_at,last_used_at,created_by',[t,id,organizationId]);
   return rows[0]||null;
 }
 async function listRules(organizationId){
@@ -144,6 +149,27 @@ async function addAudit(a){
   await ensure();requireOrganization(a.organization_id);
   await q('INSERT INTO audit(id,organization_id,timestamp,action,actor,target,status) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET organization_id=EXCLUDED.organization_id,status=EXCLUDED.status',[a.id,a.organization_id,a.timestamp,a.action,a.actor,a.target||null,a.status||null]);
 }
+async function provisionOrganization(input){
+  await ensure();
+  const t=new Date().toISOString();
+  const result=await sql.begin(async tx=>{
+    const orgs=await tx`INSERT INTO organizations(id,name,slug,industry,company_size,created_at,updated_at)
+      VALUES(${input.id},${input.name},${input.slug},${input.industry},${input.company_size},${t},${t})
+      RETURNING *`;
+    const users=await tx`INSERT INTO users(organization_id,username,email,password_hash,role,enabled,created_at,updated_at)
+      VALUES(${input.id},${input.email},${input.email},${input.password_hash},'admin',TRUE,${t},${t})
+      RETURNING id,organization_id,username,email,role,enabled,created_at,updated_at`;
+    await tx`INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,last_used_at,created_by)
+      VALUES(${input.connector_id},${input.id},${input.connector_name},${input.key_hash},${input.key_raw.slice(0,8)},${input.environment},TRUE,${t},NULL,${input.email})`;
+    await tx`INSERT INTO detection_rules(organization_id,rule_key,name,description,enabled,window_ms,threshold,severities,categories,message_pattern,alert_severity,title,updated_at,updated_by)
+      VALUES(${input.id},'auth-bruteforce-v1','Authentication brute force','Repeated failed authentication attempts from one source.',TRUE,300000,5,'["HIGH","CRITICAL"]'::jsonb,'["ssh","login","authentication"]'::jsonb,'/failed|invalid|denied/i','CRITICAL','Possible brute-force authentication attack',${t},'system')
+      ON CONFLICT(organization_id,rule_key) DO NOTHING`;
+    await tx`INSERT INTO audit(id,organization_id,timestamp,action,actor,target,status)
+      VALUES(${crypto.randomUUID()},${input.id},${t},'ORGANIZATION_CREATED',${input.email},${input.id},'ACTIVE')`;
+    return {organization:orgs[0],user:users[0],connector:{id:input.connector_id,name:input.connector_name,environment:input.environment,created_at:t}};
+  });
+  return result;
+}
 async function prune(){
   await ensure();
   const cut=new Date(Date.now()-retentionDays*86400000).toISOString();
@@ -157,6 +183,8 @@ async function close(){await sql.end({timeout:5});}
 module.exports={
   DEFAULT_ORGANIZATION_ID,
   createOrganization,
+  provisionOrganization,
+  getOrganization,
   getEvents,
   getRecentEvents,
   getAlerts,

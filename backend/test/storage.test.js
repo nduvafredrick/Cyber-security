@@ -37,7 +37,7 @@ test('sqlite storage persists and queries events',()=>{
 
 test('authentication accepts correct credentials and rejects incorrect ones',()=>{
   const {security,store}=makeStore();
-  assert.deepEqual(security.login('admin','password'),{id:1,organization_id:store.DEFAULT_ORGANIZATION_ID,username:'admin',role:'admin'});
+  assert.deepEqual(security.login('admin','password'),{id:1,organization_id:store.DEFAULT_ORGANIZATION_ID,username:'admin',email:null,role:'admin'});
   assert.equal(security.login('admin','wrong'),null);
   assert.equal(security.login('other','password'),null);
   store.db.close();
@@ -132,6 +132,32 @@ test('legacy SQLite data migrates into the default organization',()=>{
   assert.equal(db.prepare('SELECT organization_id FROM events WHERE id=?').get('legacy-event').organization_id,DEFAULT_ORGANIZATION_ID);
   assert.equal(db.prepare('SELECT organization_id FROM users WHERE username=?').get('legacy-admin').organization_id,DEFAULT_ORGANIZATION_ID);
   assert.equal(db.prepare('SELECT organization_id FROM detection_rules WHERE rule_key=?').get('legacy-rule').organization_id,DEFAULT_ORGANIZATION_ID);
-  assert.deepEqual(db.prepare('SELECT version FROM _schema_migrations ORDER BY version').all().map(x=>x.version),[1,2]);
+  assert.deepEqual(db.prepare('SELECT version FROM _schema_migrations ORDER BY version').all().map(x=>x.version),[1,2,3]);
   db.close();
+});
+
+test('SQLite organization provisioning creates the administrator and connector atomically',()=>{
+  const {store}=makeStore();
+  const passwordHash=bcrypt.hashSync('long-onboarding-password',4);
+  const result=store.provisionOrganization({
+    id:'org-provision-test',
+    name:'Provisioned Company',
+    slug:'provisioned-company',
+    industry:'Technology',
+    company_size:'11-50',
+    email:'owner@provisioned.example',
+    password_hash:passwordHash,
+    connector_id:'connector-provision-test',
+    connector_name:'Production API',
+    environment:'Production',
+    key_hash:'hash-provision-test',
+    key_raw:'sk_provision-test'
+  });
+  assert.equal(result.organization.id,'org-provision-test');
+  assert.equal(result.user.email,'owner@provisioned.example');
+  assert.equal(result.connector.environment,'Production');
+  assert.equal(store.getIngestKeys('org-provision-test')[0].organization_id,'org-provision-test');
+  assert.equal(store.listRules('org-provision-test').length,1);
+  assert.equal(store.getAudit('org-provision-test')[0].action,'ORGANIZATION_CREATED');
+  store.db.close();
 });

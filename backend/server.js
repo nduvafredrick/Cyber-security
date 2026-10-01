@@ -24,6 +24,17 @@ app.use(express.json({limit:'1mb'}));
 app.use('/api',(_q,r,n)=>{r.set('Cache-Control','no-store');n()});
 const ingestClientKey=(req)=>'k:'+crypto.createHash('sha256').update(String(req.headers['x-api-key']||'')).digest('hex');
 const ingestRateLimit=rateLimit({windowMs:60000,keyGenerator:ingestClientKey,limit:config.ingestRateLimitPerMinute,standardHeaders:true,legacyHeaders:false,message:(req)=>({error:'Ingestion rate limit exceeded',request_id:req.requestId})});
+const ONBOARDING_INDUSTRIES=['Technology','Finance','Healthcare','Education','Retail','Manufacturing','Government','Non-profit','Other'];
+const ONBOARDING_COMPANY_SIZES=['1-10','11-50','51-200','201-500','501-1000','1000+'];
+const ONBOARDING_ENVIRONMENTS=['Production','Staging','Development'];
+const onboardingRateLimit=rateLimit({windowMs:3600000,limit:5,standardHeaders:true,legacyHeaders:false,message:()=>({error:'Too many onboarding attempts. Please try again later.'})});
+function slugify(value){
+  const base=String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60);
+  return (base||'company')+'-'+crypto.randomBytes(3).toString('hex');
+}
+function normalizeEmail(value){
+  return String(value||'').trim().toLowerCase();
+}
 const bulkIngestRateLimit=rateLimit({windowMs:60000,keyGenerator:ingestClientKey,limit:config.bulkIngestRateLimitPerMinute,standardHeaders:true,legacyHeaders:false,message:(req)=>({error:'Bulk ingestion rate limit exceeded',request_id:req.requestId})});
 function normalize(input){
   if(!input||typeof input!=='object'||Array.isArray(input))throw Error('Event must be an object');
@@ -44,23 +55,71 @@ async function processEvent(e,organizationId){metrics.events_ingested++;const ev
 app.get('/health',(_q,r)=>r.json({status:'ok',service:'sentinel-siem',version:'3.1.0'}));
 app.get('/metrics',security.metricsAuth,(_q,r)=>{r.type('text/plain').send('# HELP sentinel_http_requests_total Total HTTP responses\n# TYPE sentinel_http_requests_total counter\nsentinel_http_requests_total '+metrics.requests+'\n# HELP sentinel_http_errors_total HTTP 5xx responses\n# TYPE sentinel_http_errors_total counter\nsentinel_http_errors_total '+metrics.errors+'\n# HELP sentinel_events_ingested_total Events accepted by ingestion endpoints\n# TYPE sentinel_events_ingested_total counter\nsentinel_events_ingested_total '+metrics.events_ingested+'\n# HELP sentinel_alerts_created_total Alerts created by detection rules\n# TYPE sentinel_alerts_created_total counter\nsentinel_alerts_created_total '+metrics.alerts_created+'\n')});
 app.get('/ready',async(_q,r)=>{try{await store.health();r.json({status:'ready',database:'ok',instance:config.instanceId})}catch(err){logger.error('readiness_failed',{error:err.message});r.status(503).json({status:'not_ready',database:'error'})}});
-app.post('/api/auth/login',rateLimit({windowMs:900000,limit:10,standardHeaders:true,legacyHeaders:false}),async(req,res)=>{const user=await security.login(req.body?.username,req.body?.password);if(!user)return res.status(401).json({error:'Invalid credentials'});await store.addAudit({id:crypto.randomUUID(),organization_id:user.organization_id,timestamp:new Date().toISOString(),action:'LOGIN_SUCCESS',actor:user.username});security.setSession(res,security.token(user));logger.info('authentication_success',{actor:user.username,organization_id:user.organization_id});res.json({user})});
+app.post('/api/onboarding',onboardingRateLimit,async(req,res)=>{
+  try{
+    const body=req.body||{};
+    const companyName=String(body.company_name||'').trim();
+    const industry=String(body.industry||'');
+    const companySize=String(body.company_size||'');
+    const email=normalizeEmail(body.admin_email);
+    const password=String(body.password||'');
+    const connectorName=String(body.connector_name||'').trim();
+    const environment=String(body.environment||'');
+    if(companyName.length<2||companyName.length>120)throw Error('Company name must be 2-120 characters');
+    if(!ONBOARDING_INDUSTRIES.includes(industry))throw Error('Invalid industry');
+    if(!ONBOARDING_COMPANY_SIZES.includes(companySize))throw Error('Invalid company size');
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw Error('Enter a valid administrator email');
+    if(password.length<12)throw Error('Password must be at least 12 characters');
+    if(connectorName.length<2||connectorName.length>80)throw Error('Connector name must be 2-80 characters');
+    if(!ONBOARDING_ENVIRONMENTS.includes(environment))throw Error('Invalid connector environment');
+    const apiKey=security.generateIngestKey();
+    const organizationId=crypto.randomUUID();
+    const connectorId=crypto.randomUUID();
+    const provisioned=await store.provisionOrganization({
+      id:organizationId,
+      name:companyName,
+      slug:slugify(companyName),
+      industry,
+      company_size:companySize,
+      email,
+      password_hash:bcrypt.hashSync(password,12),
+      connector_id:connectorId,
+      connector_name:connectorName,
+      environment,
+      key_hash:crypto.createHash('sha256').update(apiKey).digest('hex'),
+      key_raw:apiKey
+    });
+    const user=provisioned.user;
+    const organization=provisioned.organization;
+    security.setSession(res,security.token(user));
+    logger.info('organization_provisioned',{organization_id:organization.id,actor:user.username});
+    res.status(201).json({
+      organization,
+      user,
+      connector:{...provisioned.connector,api_key:apiKey,endpoint:'/api/ingest/event'}
+    });
+  }catch(err){
+    logger.warn('organization_onboarding_failed',{error:err.message});
+    res.status(400).json({error:/UNIQUE|duplicate|unique/i.test(err.message)?'That administrator email is already registered.':err.message});
+  }
+});
+app.post('/api/auth/login',rateLimit({windowMs:900000,limit:10,standardHeaders:true,legacyHeaders:false}),async(req,res)=>{const user=await security.login(req.body?.username,req.body?.password);if(!user)return res.status(401).json({error:'Invalid credentials'});await store.addAudit({id:crypto.randomUUID(),organization_id:user.organization_id,timestamp:new Date().toISOString(),action:'LOGIN_SUCCESS',actor:user.username});security.setSession(res,security.token(user));logger.info('authentication_success',{actor:user.username,organization_id:user.organization_id});res.json({user,organization:await store.getOrganization(user.organization_id)})});
 app.post('/api/auth/logout',security.auth,async(req,res)=>{security.clearSession(res);await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'LOGOUT',actor:req.user.username});res.status(204).end()});
-app.get('/api/auth/me',security.auth,(req,res)=>res.json({user:req.user}));
+app.get('/api/auth/me',security.auth,async(req,res)=>res.json({user:req.user,organization:await store.getOrganization(req.user.organization_id)}));
 app.get('/api/admin/users',security.auth,security.requireRole('admin'),async(req,res)=>res.json({users:await store.listUsers(req.user.organization_id)}));
 app.post('/api/admin/users',security.auth,security.requireRole('admin'),async(req,res)=>{try{const username=String(req.body?.username||'').trim(),password=String(req.body?.password||''),role=req.body?.role==='admin'?'admin':'analyst';if(!/^[a-zA-Z0-9._-]{3,50}$/.test(username))throw Error('Invalid username');if(password.length<12)throw Error('Password must be at least 12 characters');const id=await store.addUser({username,password_hash:bcrypt.hashSync(password,12),role,organization_id:req.user.organization_id});await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'USER_CREATED',actor:req.user.username,target:username,status:role});res.status(201).json({user:(await store.listUsers(req.user.organization_id)).find(x=>x.id===id)})}catch(err){res.status(400).json({error:/UNIQUE|constraint/i.test(err.message)?'Username already exists':err.message})}});
 app.patch('/api/admin/users/:id',security.auth,security.requireRole('admin'),async(req,res)=>{if(Number(req.params.id)===req.user.id&&req.body?.enabled===false)return res.status(400).json({error:'You cannot disable your own account'});const user=await store.setUserEnabled(Number(req.params.id),req.body?.enabled!==false,req.user.organization_id);if(!user)return res.status(404).json({error:'User not found'});await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'USER_STATUS_CHANGE',actor:req.user.username,target:user.username,status:user.enabled?'ENABLED':'DISABLED'});res.json({user})});
 app.get('/api/admin/ingest-keys',security.auth,security.requireRole('admin'),async(req,res)=>res.json({keys:await store.getIngestKeys(req.user.organization_id)}));
-async function issueIngestKey(req,name){
+async function issueIngestKey(req,name,environment='Production'){
   const raw=security.generateIngestKey();
-  const key={id:crypto.randomUUID(),organization_id:req.user.organization_id,name:String(name||'connector-key').trim().slice(0,80)||'connector-key',raw,hash:crypto.createHash('sha256').update(raw).digest('hex'),created_by:req.user.username};
+  const key={id:crypto.randomUUID(),organization_id:req.user.organization_id,name:String(name||'connector-key').trim().slice(0,80)||'connector-key',environment:ONBOARDING_ENVIRONMENTS.includes(environment)?environment:'Production',raw,hash:crypto.createHash('sha256').update(raw).digest('hex'),created_by:req.user.username};
   const record=await store.createIngestKey(key);
   await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'INGEST_KEY_CREATED',actor:req.user.username,target:record.id,status:'ACTIVE'});
   return {key:raw,record};
 }
-app.post('/api/admin/ingest-keys',security.auth,security.requireRole('admin'),async(req,res)=>{try{res.status(201).json(await issueIngestKey(req,req.body?.name))}catch(err){res.status(400).json({error:err.message})}});
-app.post('/api/admin/ingest-keys/rotate',security.auth,security.requireRole('admin'),async(req,res)=>{for(const existing of (await store.getIngestKeys(req.user.organization_id)).filter(k=>k.enabled))await store.revokeIngestKey(existing.id,req.user.organization_id);res.status(201).json(await issueIngestKey(req,req.body?.name||'rotated-key'))});
-app.post('/api/admin/ingest-keys/:id/rotate',security.auth,security.requireRole('admin'),async(req,res)=>{const existing=(await store.getIngestKeys(req.user.organization_id)).find(k=>k.id===req.params.id);if(!existing)return res.status(404).json({error:'Key not found'});if(existing.enabled)await store.revokeIngestKey(existing.id,req.user.organization_id);res.status(201).json(await issueIngestKey(req,req.body?.name||existing.name))});
+app.post('/api/admin/ingest-keys',security.auth,security.requireRole('admin'),async(req,res)=>{try{res.status(201).json(await issueIngestKey(req,req.body?.name,req.body?.environment))}catch(err){res.status(400).json({error:err.message})}});
+app.post('/api/admin/ingest-keys/rotate',security.auth,security.requireRole('admin'),async(req,res)=>{for(const existing of (await store.getIngestKeys(req.user.organization_id)).filter(k=>k.enabled))await store.revokeIngestKey(existing.id,req.user.organization_id);res.status(201).json(await issueIngestKey(req,req.body?.name||'rotated-key',req.body?.environment))});
+app.post('/api/admin/ingest-keys/:id/rotate',security.auth,security.requireRole('admin'),async(req,res)=>{const existing=(await store.getIngestKeys(req.user.organization_id)).find(k=>k.id===req.params.id);if(!existing)return res.status(404).json({error:'Key not found'});if(existing.enabled)await store.revokeIngestKey(existing.id,req.user.organization_id);res.status(201).json(await issueIngestKey(req,req.body?.name||existing.name,req.body?.environment||existing.environment))});
 app.delete('/api/admin/ingest-keys/:id',security.auth,security.requireRole('admin'),async(req,res)=>{const key=await store.revokeIngestKey(req.params.id,req.user.organization_id);if(!key)return res.status(404).json({error:'Key not found'});await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'INGEST_KEY_REVOKED',actor:req.user.username,target:key.id,status:'REVOKED'});res.json({key})});
 app.get('/api/admin/detection-rules',security.auth,security.requireRole('admin'),async(req,res)=>res.json({rules:await store.listRules(req.user.organization_id)}));
 app.put('/api/admin/detection-rules/:ruleKey',security.auth,security.requireRole('admin'),async(req,res)=>{try{const body=req.body||{},rule={rule_key:String(req.params.ruleKey).trim(),name:String(body.name||'').slice(0,100),description:String(body.description||'').slice(0,500),enabled:body.enabled!==false,window_ms:Number(body.window_ms),threshold:Number(body.threshold),severities:Array.isArray(body.severities)?body.severities:[],categories:Array.isArray(body.categories)?body.categories.map(String):[],message_pattern:String(body.message_pattern||''),alert_severity:String(body.alert_severity||'HIGH').toUpperCase(),title:String(body.title||'Detection rule').slice(0,150)};if(!rule.rule_key||!rule.name||rule.window_ms<1000||rule.window_ms>86400000||!Number.isInteger(rule.threshold)||rule.threshold<1||rule.threshold>10000)throw Error('Invalid rule configuration');if(!['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(rule.alert_severity))throw Error('Invalid alert severity');if(!rule.severities.every(x=>['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(x)))throw Error('Invalid event severity');const patternMatch=rule.message_pattern.match(/^\/(.*)\/([a-z]*)$/i);new RegExp(patternMatch?patternMatch[1]:rule.message_pattern,patternMatch?patternMatch[2]:'');const saved=await store.upsertRule(rule,req.user.username,req.user.organization_id);await store.addAudit({id:crypto.randomUUID(),organization_id:req.user.organization_id,timestamp:new Date().toISOString(),action:'DETECTION_RULE_UPDATED',actor:req.user.username,target:rule.rule_key,status:rule.enabled?'ENABLED':'DISABLED'});res.json({rule:{...saved,enabled:Boolean(saved.enabled),severities:Array.isArray(saved.severities)?saved.severities:JSON.parse(saved.severities),categories:Array.isArray(saved.categories)?saved.categories:JSON.parse(saved.categories)}})}catch(err){res.status(400).json({error:err.message})}});
