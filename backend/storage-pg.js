@@ -223,6 +223,7 @@ async function createAgent(input){await ensure();requireOrganization(input.organ
 async function getAgent(id,organizationId){await ensure();requireOrganization(organizationId);const rows=await q('SELECT * FROM agents WHERE id=$1 AND organization_id=$2',[id,organizationId]);return rows[0]||null}
 async function listAgents(organizationId){await ensure();requireOrganization(organizationId);return q('SELECT * FROM agents WHERE organization_id=$1 ORDER BY created_at DESC',[organizationId])}
 async function createEnrollmentToken(agentId,organizationId,tokenHash,expiresAt){await ensure();requireOrganization(organizationId);if(!await getAgent(agentId,organizationId))throw new Error('Agent not found');const t=new Date().toISOString();await q('INSERT INTO agent_enrollment_tokens(agent_id,token_hash,expires_at,created_at) VALUES($1,$2,$3,$4)',[agentId,tokenHash,expiresAt,t]);return {agent_id:agentId,expires_at:expiresAt}}
+async function getEnrollmentToken(tokenHash){await ensure();const rows=await q('SELECT agent_id,expires_at,used_at FROM agent_enrollment_tokens WHERE token_hash=$1',[tokenHash]);return rows[0]||null}
 async function enrollAgent(tokenHash,input){await ensure();return sql.begin(async tx=>{const rows=await tx`SELECT t.id,t.agent_id,t.expires_at,t.used_at,a.organization_id,a.integration_id,a.status FROM agent_enrollment_tokens t JOIN agents a ON a.id=t.agent_id WHERE t.token_hash=${tokenHash} FOR UPDATE`;const row=rows[0];if(!row||row.used_at||new Date(row.expires_at)<=new Date())return null;await tx`UPDATE agent_enrollment_tokens SET used_at=${new Date().toISOString()} WHERE id=${row.id} AND used_at IS NULL`;await tx`UPDATE agents SET credential_hash=${input.credential_hash},credential_prefix=${input.credential_prefix},status='active',version=${input.version||null},hostname=${input.hostname||null},os=${input.os||null},enrolled_at=NOW(),disabled_at=NULL WHERE id=${row.agent_id}`;const updated=await tx`SELECT * FROM agents WHERE id=${row.agent_id}`;return updated[0]||null})}
 async function getAgentByCredential(agentId,credentialHash){await ensure();const rows=await q("SELECT * FROM agents WHERE id=$1 AND credential_hash=$2 AND status='active'",[agentId,credentialHash]);return rows[0]||null}
 async function updateAgentHeartbeat(agentId,input){await ensure();const rows=await q("UPDATE agents SET last_seen_at=NOW(),last_heartbeat=$1::jsonb,version=COALESCE($2,version),hostname=COALESCE($3,hostname) WHERE id=$4 AND status='active' RETURNING *",[JSON.stringify(input),input.agent_version||null,input.hostname||null,agentId]);return rows[0]||null}
@@ -268,6 +269,7 @@ module.exports={
   getAgent,
   listAgents,
   createEnrollmentToken,
+  getEnrollmentToken,
   enrollAgent,
   getAgentByCredential,
   updateAgentHeartbeat,
