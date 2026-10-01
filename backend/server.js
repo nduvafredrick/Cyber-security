@@ -187,13 +187,13 @@ function agentHealth(agent){
   if(heartbeat?.status==='degraded'||heartbeat?.status==='error'||Number(heartbeat?.queue_depth||0)>1000)return 'degraded';
   return 'online';
 }
-function publicAgent(agent){const {credential_hash,last_heartbeat,...safe}=agent;return {...safe,health:agentHealth(agent)}}
+function publicAgent(agent){const {credential_hash,...safe}=agent;return {...safe,health:agentHealth(agent)}}
 function makeEnrollmentToken(){return 'sge_'+crypto.randomBytes(32).toString('base64url')}
 function makeAgentCredential(agentId){const secret=crypto.randomBytes(32).toString('base64url');return {credential:'sga_'+agentId+'.'+secret,secret}}
 function validateAgentEvent(input){
   if(!input||typeof input!=='object'||Array.isArray(input))throw Error('Event must be an object');
   const timestamp=String(input.timestamp||'');
-  if(!/^\\d{4}-\\d{2}-\\d{2}T/.test(timestamp)||Number.isNaN(Date.parse(timestamp)))throw Error('Invalid timestamp');
+  if(!/^\\d{4}-\\d{2}-\\d{2}T/.test(timestamp)||!timestamp.endsWith('Z')||Number.isNaN(Date.parse(timestamp)))throw Error('Invalid timestamp');
   if(Date.parse(timestamp)>Date.now()+86400000)throw Error('Timestamp is too far in the future');
   const source=String(input.source||'');
   if(!['linux','windows','syslog','app','other'].includes(source))throw Error('Invalid source');
@@ -285,7 +285,7 @@ const frontendAssets=path.join(frontendDist,'assets');
 app.use('/assets',express.static(frontendAssets,{fallthrough:false,setHeaders:res=>res.setHeader('Cache-Control','public,max-age=31536000,immutable')}));
 app.use(express.static(frontendDist,{index:'index.html',setHeaders:(res,file)=>{if(file.endsWith('index.html'))res.setHeader('Cache-Control','no-store')}}));
 app.get('*',(_q,r)=>r.sendFile(path.join(__dirname,'..','frontend','dist','index.html')));
-app.use((err,req,res,_next)=>{if(res.headersSent)return;const status=err.message==='Origin not allowed'?403:500;logger.error('request_failed',{request_id:req.requestId,error:err.message,status});res.status(status).json({error:status===403?'Origin not allowed':'Internal server error',request_id:req.requestId})});
+app.use((err,req,res,_next)=>{if(res.headersSent)return;const status=err.type==='entity.too.large'?413:err.message==='Origin not allowed'?403:500;logger.error('request_failed',{request_id:req.requestId,error:err.message,status});res.status(status).json({error:status===413?'Payload too large':status===403?'Origin not allowed':'Internal server error',request_id:req.requestId})});
 const wss=new WebSocketServer({noServer:true});let server;
 function attachWebSocket(){server.on('upgrade',async(req,socket,head)=>{if(!req.url.startsWith('/ws'))return socket.destroy();const session=security.readCookie(req,security.COOKIE_NAME);try{req.user=await security.authenticatedUser(session)}catch{socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');return socket.destroy()}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req))})}
 wss.on('connection',(ws,req)=>{ws.organization_id=req.user.organization_id;ws.isAlive=true;ws.on('pong',()=>{ws.isAlive=true});ws.filter={};clients.add(ws);ws.on('message',raw=>{try{const msg=JSON.parse(raw.toString());if(msg.type==='subscribe')ws.filter={severity:['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(msg.severity)?msg.severity:'',search:String(msg.search||'').slice(0,100)}}catch{}});ws.on('close',()=>clients.delete(ws));ws.on('error',()=>{clients.delete(ws);ws.terminate()})});
