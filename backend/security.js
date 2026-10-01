@@ -61,6 +61,17 @@ function apiKey(req,res,next){
     return res.status(401).json({error:'Invalid API key'});
   }
 }
+function agentCredential(req,res,next){
+  const value=String(req.headers.authorization||'').replace(/^Bearer\\s+/i,'');
+  const match=value.match(/^sga_(agt_[a-f0-9-]+)\\.([A-Za-z0-9_-]+)$/);
+  if(!match)return res.status(401).json({error:'Invalid agent credential'});
+  const hash=crypto.createHash('sha256').update(match[2]).digest('hex');
+  Promise.resolve(store.getAgentByCredential(match[1],hash)).then(agent=>{
+    if(!agent)return res.status(401).json({error:'Invalid agent credential'});
+    req.agent=agent;
+    next();
+  }).catch(()=>res.status(401).json({error:'Invalid agent credential'}));
+}
 function metricsAuth(req,res,next){
   if(process.env.NODE_ENV!=='production')return next();
   const supplied=String(req.headers['x-metrics-key']||'');
@@ -101,6 +112,7 @@ module.exports={
   authenticatedUser,
   auth,
   apiKey,
+  agentCredential,
   metricsAuth,
   login,
   setSession,
