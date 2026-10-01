@@ -475,8 +475,8 @@ test('integration endpoints never expose another organization integration',async
   const userBId=await store.addUser({username:'integration-b-'+suffix,password_hash:passwordHash,role:'admin',organization_id:orgB.id});
   const tokenA=security.token({id:userAId,username:'integration-a-'+suffix,role:'admin',organization_id:orgA.id});
   const tokenB=security.token({id:userBId,username:'integration-b-'+suffix,role:'admin',organization_id:orgB.id});
-  const first=await store.createIntegrationWithKey({id:'integration-a-'+suffix,organization_id:orgA.id,name:'Agent A',type:'agent',environment:'Production',key_id:'integration-key-a-'+suffix,key_raw:'sk_a_'+suffix});
-  const second=await store.createIntegrationWithKey({id:'integration-b-'+suffix,organization_id:orgB.id,name:'Agent B',type:'agent',environment:'Production',key_id:'integration-key-b-'+suffix,key_raw:'sk_b_'+suffix});
+  const first=await store.createIntegrationWithKey({id:'integration-a-'+suffix,organization_id:orgA.id,name:'Agent A',type:'agent',environment:'Production',key_id:'integration-key-a-'+suffix,key_raw:'sk_a_'+suffix,created_by:userA.username});
+  const second=await store.createIntegrationWithKey({id:'integration-b-'+suffix,organization_id:orgB.id,name:'Agent B',type:'agent',environment:'Production',key_id:'integration-key-b-'+suffix,key_raw:'sk_b_'+suffix,created_by:userB.username});
   assert.equal(first.integration.organization_id,orgA.id);
   assert.equal(second.integration.organization_id,orgB.id);
   const listA=await fetch(base+'/api/admin/integrations',{headers:{authorization:'Bearer '+tokenA}});
