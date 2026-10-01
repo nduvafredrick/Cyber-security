@@ -16,6 +16,7 @@ test.before(async()=>{
   process.env.INGEST_API_KEY='api-test-ingest-key';
   process.env.INGEST_RATE_LIMIT_PER_MINUTE='300';
   process.env.BULK_INGEST_RATE_LIMIT_PER_MINUTE='60';
+  process.env.LOGIN_RATE_LIMIT_PER_15_MINUTES='100';
   process.env.ADMIN_USER='admin';
   process.env.ADMIN_PASSWORD_HASH=bcrypt.hashSync('password',4);
   for(const key of ['../config','../storage','../security','../server']){try{delete require.cache[require.resolve(key)]}catch{}}
@@ -23,7 +24,11 @@ test.before(async()=>{
   server=app.startServer();
   await new Promise(resolve=>server.once('listening',resolve));
 });
-test.after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));});
+test.after(async()=>{
+  const {closeWebSocketClients}=require('../server');
+  closeWebSocketClients();
+  if(server)await new Promise(resolve=>server.close(resolve));
+});
 
 test('metrics expose operational counters',async()=>{
   const base='http://127.0.0.1:'+server.address().port;
@@ -132,6 +137,18 @@ test('authenticated WebSocket receives subscribed live events',async()=>{
   ws.close();
 });
 
+test('WebSocket heartbeat removes stale clients and preserves live clients',async()=>{
+  const {heartbeatClients}=require('../server');
+  let staleTerminated=false;
+  let livePinged=false;
+  const stale={isAlive:false,terminate:()=>{staleTerminated=true}};
+  const live={isAlive:true,ping:()=>{livePinged=true}};
+  heartbeatClients(new Set([stale,live]));
+  assert.equal(staleTerminated,true);
+  assert.equal(live.isAlive,false);
+  assert.equal(livePinged,true);
+});
+
 test('admin can create an analyst and manage rotatable ingest keys',async()=>{
   const base='http://127.0.0.1:'+server.address().port;
   const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
@@ -165,6 +182,7 @@ test('analyst sessions cannot change alert status',async()=>{
 test('admin can update a persistent detection rule',async()=>{
   const base='http://127.0.0.1:'+server.address().port;
   const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'password'})});
+  assert.equal(login.status,200);
   const cookie=login.headers.get('set-cookie');
   const update=await fetch(base+'/api/admin/detection-rules/auth-bruteforce-v1',{method:'PUT',headers:{'content-type':'application/json',cookie},body:JSON.stringify({name:'SSH authentication burst',description:'Configurable test rule',enabled:true,window_ms:300000,threshold:3,severities:['HIGH','CRITICAL'],categories:['ssh'],message_pattern:'/failed|invalid/i',alert_severity:'CRITICAL',title:'Authentication burst detected'})});
   assert.equal(update.status,200);
