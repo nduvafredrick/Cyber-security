@@ -174,7 +174,7 @@ async function addEvents(items){
   await ensure();
   for(const e of items){
     requireOrganization(e.organization_id);
-    await q('INSERT INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET organization_id=EXCLUDED.organization_id,timestamp=EXCLUDED.timestamp,severity=EXCLUDED.severity,category=EXCLUDED.category,event_type=EXCLUDED.event_type,source_ip=EXCLUDED.source_ip,message=EXCLUDED.message,hostname=EXCLUDED.hostname,metadata=EXCLUDED.metadata',[e.id,e.organization_id,e.timestamp,e.severity,e.category,e.event_type||'generic',e.source_ip,e.message,e.hostname,JSON.stringify(e.metadata||{})]);
+    await q('INSERT INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata,agent_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET organization_id=EXCLUDED.organization_id,timestamp=EXCLUDED.timestamp,severity=EXCLUDED.severity,category=EXCLUDED.category,event_type=EXCLUDED.event_type,source_ip=EXCLUDED.source_ip,message=EXCLUDED.message,hostname=EXCLUDED.hostname,metadata=EXCLUDED.metadata',[e.id,e.organization_id,e.timestamp,e.severity,e.category,e.event_type||'generic',e.source_ip,e.message,e.hostname,JSON.stringify(e.metadata||{}),e.agent_id||null]);
   }
 }
 async function addAlert(a){
@@ -228,6 +228,7 @@ async function getAgentByCredential(agentId,credentialHash){await ensure();const
 async function updateAgentHeartbeat(agentId,input){await ensure();const rows=await q("UPDATE agents SET last_seen_at=NOW(),last_heartbeat=$1::jsonb,version=COALESCE($2,version),hostname=COALESCE($3,hostname) WHERE id=$4 AND status='active' RETURNING *",[JSON.stringify(input),input.agent_version||null,input.hostname||null,agentId]);return rows[0]||null}
 async function setAgentStatus(id,status,organizationId){await ensure();requireOrganization(organizationId);const rows=await q('UPDATE agents SET status=$1,disabled_at=$2 WHERE id=$3 AND organization_id=$4 RETURNING *',[status,status==='disabled'?new Date().toISOString():null,id,organizationId]);return rows[0]||null}
 async function rotateAgent(id,organizationId){await ensure();requireOrganization(organizationId);await q("UPDATE agents SET credential_hash=NULL,credential_prefix=NULL,status='pending',disabled_at=NULL WHERE id=$1 AND organization_id=$2",[id,organizationId]);await q('DELETE FROM agent_enrollment_tokens WHERE agent_id=$1',[id]);return getAgent(id,organizationId)}
+async function touchIntegration(id,organizationId){await ensure();requireOrganization(organizationId);await q("UPDATE integrations SET last_seen_at=NOW(),updated_at=NOW() WHERE id=$1 AND organization_id=$2 AND status='ACTIVE'",[id,organizationId])}
 async function deleteAgent(id,organizationId){await ensure();requireOrganization(organizationId);const rows=await q('DELETE FROM agents WHERE id=$1 AND organization_id=$2',[id,organizationId]);return rows.count>0}
 async function claimIngestBatch(agentId,batchId,accepted){await ensure();const rows=await q('INSERT INTO ingest_batches(agent_id,batch_id,received_at,accepted) VALUES($1,$2,NOW(),$3) ON CONFLICT(agent_id,batch_id) DO NOTHING RETURNING accepted',[agentId,batchId,accepted]);if(rows[0])return {duplicate:false,accepted:Number(rows[0].accepted)};const existing=await q('SELECT accepted FROM ingest_batches WHERE agent_id=$1 AND batch_id=$2',[agentId,batchId]);return {duplicate:true,accepted:Number(existing[0].accepted)}}
 async function incrementAgentEvents(agentId,count){await ensure();await q('UPDATE agents SET events_received=events_received+$1 WHERE id=$2',[count,agentId])}
@@ -273,6 +274,7 @@ module.exports={
   setAgentStatus,
   rotateAgent,
   deleteAgent,
+  touchIntegration,
   claimIngestBatch,
   incrementAgentEvents,
   listRules,
