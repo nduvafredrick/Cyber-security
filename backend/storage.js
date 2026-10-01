@@ -278,6 +278,7 @@ function createEnrollmentToken(agentId,organizationId,tokenHash,expiresAt){
   db.prepare('INSERT INTO agent_enrollment_tokens(agent_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)').run(agentId,tokenHash,expiresAt,t);
   return {agent_id:agentId,expires_at:expiresAt};
 }
+function getEnrollmentToken(tokenHash){return db.prepare('SELECT agent_id,expires_at,used_at FROM agent_enrollment_tokens WHERE token_hash=?').get(tokenHash)||null}
 function enrollAgent(tokenHash,input){
   const t=now();
   return db.transaction(()=>{
@@ -359,6 +360,7 @@ module.exports={
   getAgent,
   listAgents,
   createEnrollmentToken,
+  getEnrollmentToken,
   enrollAgent,
   getAgentByCredential,
   updateAgentHeartbeat,
