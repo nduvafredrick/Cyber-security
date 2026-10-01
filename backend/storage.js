@@ -130,7 +130,7 @@ function getIngestKeys(organizationId){
 }
 function verifyIngestKey(value){
   const hash=crypto.createHash('sha256').update(String(value||'')).digest('hex');
-  const key=db.prepare('SELECT id,organization_id,name,key_prefix FROM ingest_keys WHERE key_hash=? AND enabled=1 AND revoked_at IS NULL').get(hash)||null;
+  const key=db.prepare("SELECT k.id,k.organization_id,k.name,k.key_prefix FROM ingest_keys k LEFT JOIN integrations i ON i.ingest_key_id=k.id WHERE k.key_hash=? AND k.enabled=1 AND k.revoked_at IS NULL AND (i.id IS NULL OR i.status='ACTIVE')").get(hash)||null;
   if(key){db.prepare('UPDATE ingest_keys SET last_used_at=? WHERE id=?').run(now(),key.id);touchIntegrationByKey(key.id)}
   return key;
 }
@@ -198,6 +198,9 @@ function listIntegrations(organizationId){
   requireOrganization(organizationId);
   return db.prepare('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE organization_id=? ORDER BY created_at DESC').all(organizationId);
 }
+function getIntegrationByIngestKey(keyId){
+  return db.prepare('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE ingest_key_id=?').get(keyId)||null;
+}
 function getIntegration(id,organizationId){
   requireOrganization(organizationId);
   return db.prepare('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE id=? AND organization_id=?').get(id,organizationId)||null;
@@ -220,7 +223,7 @@ function createIntegrationWithKey(input){
 }
 function setIntegrationStatus(id,status,organizationId){
   requireOrganization(organizationId);
-  db.prepare('UPDATE integrations SET status=?,updated_at=? WHERE id=? AND organization_id=?').run(status,now(),id,organizationId);
+  const tx=db.transaction(()=>{db.prepare('UPDATE integrations SET status=?,updated_at=? WHERE id=? AND organization_id=?').run(status,now(),id,organizationId);const integration=db.prepare('SELECT ingest_key_id FROM integrations WHERE id=? AND organization_id=?').get(id,organizationId);if(integration?.ingest_key_id)db.prepare('UPDATE ingest_keys SET enabled=?,revoked_at=CASE WHEN ?=0 THEN COALESCE(revoked_at,?) ELSE revoked_at END WHERE id=?').run(status==='ACTIVE'?1:0,status==='ACTIVE'?1:0,now(),integration.ingest_key_id);});tx();
   return getIntegration(id,organizationId);
 }
 function touchIntegrationByKey(keyId){
@@ -264,6 +267,7 @@ module.exports={
   getOrganization,
   listIntegrations,
   getIntegration,
+  getIntegrationByIngestKey,
   createIntegrationWithKey,
   setIntegrationStatus,
   getEvents,
