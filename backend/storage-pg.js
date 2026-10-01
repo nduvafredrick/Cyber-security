@@ -29,6 +29,37 @@ async function createOrganization(organization){
   const rows=await q('INSERT INTO organizations(id,name,slug,industry,company_size,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$6) RETURNING *',[organization.id,organization.name,organization.slug,organization.industry||'Other',organization.company_size||'Unknown',t]);
   return rows[0];
 }
+async function listIntegrations(organizationId){
+  await ensure();requireOrganization(organizationId);
+  return q('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE organization_id=$1 ORDER BY created_at DESC',[organizationId]);
+}
+async function getIntegration(id,organizationId){
+  await ensure();requireOrganization(organizationId);
+  const rows=await q('SELECT id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at FROM integrations WHERE id=$1 AND organization_id=$2',[id,organizationId]);
+  return rows[0]||null;
+}
+async function createIntegrationWithKey(input){
+  await ensure();requireOrganization(input.organization_id);
+  const t=new Date().toISOString();
+  return sql.begin(async tx=>{
+    const keyHash=input.key_hash||crypto.createHash('sha256').update(input.key_raw).digest('hex');
+    await tx`INSERT INTO ingest_keys(id,organization_id,name,key_hash,key_prefix,environment,enabled,created_at,last_used_at,created_by)
+      VALUES(${input.key_id},${input.organization_id},${input.name},${keyHash},${input.key_raw.slice(0,8)},${input.environment},TRUE,${t},NULL,${input.created_by})`;
+    const rows=await tx`INSERT INTO integrations(id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at)
+      VALUES(${input.id},${input.organization_id},${input.name},${input.type},${input.environment},'ACTIVE',${input.key_id},${t},${t},NULL)
+      RETURNING id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at`;
+    return {integration:rows[0],key:{key_id:input.key_id,raw:input.key_raw}};
+  });
+}
+async function setIntegrationStatus(id,status,organizationId){
+  await ensure();requireOrganization(organizationId);
+  const rows=await q('UPDATE integrations SET status=$1,updated_at=NOW() WHERE id=$2 AND organization_id=$3 RETURNING id,organization_id,name,type,environment,status,ingest_key_id,created_at,updated_at,last_seen_at',[status,id,organizationId]);
+  return rows[0]||null;
+}
+async function touchIntegrationByKey(keyId){
+  await ensure();
+  await q("UPDATE integrations SET last_seen_at=NOW(),updated_at=NOW() WHERE ingest_key_id=$1 AND status='ACTIVE'",[keyId]);
+}
 async function getOrganization(organizationId){
   await ensure();requireOrganization(organizationId);
   const rows=await q('SELECT * FROM organizations WHERE id=$1',[organizationId]);
@@ -100,6 +131,7 @@ async function verifyIngestKey(raw){
   const rows=await q('SELECT id,organization_id,name,key_prefix FROM ingest_keys WHERE key_hash=$1 AND enabled=TRUE AND revoked_at IS NULL',[h]);
   if(!rows[0])return null;
   await q('UPDATE ingest_keys SET last_used_at=NOW() WHERE id=$1',[rows[0].id]);
+  await touchIntegrationByKey(rows[0].id);
   return rows[0];
 }
 async function createIngestKey(key){
@@ -185,6 +217,10 @@ module.exports={
   createOrganization,
   provisionOrganization,
   getOrganization,
+  listIntegrations,
+  getIntegration,
+  createIntegrationWithKey,
+  setIntegrationStatus,
   getEvents,
   getRecentEvents,
   getAlerts,
