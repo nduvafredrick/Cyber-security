@@ -75,7 +75,7 @@ jobs:
             -e ADMIN_PASSWORD_HASH="$ADMIN_HASH" \
             -p 3001:3001 sentinel-siem:ci
           for i in {1..20}; do
-            if curl -fsS http://127.0.0.1:3001/ready; then exit 0; fi
+            if curl -fsS http://127.0.0.1:3001/ready; then break; fi
             sleep 2
           done
           docker logs sentinel-ci
@@ -129,7 +129,11 @@ jobs:
           echo '--- browser container logs ---'
           docker logs sentinel-browser 2>&1 | tail -n 300 || true
           echo '--- direct asset request with browser-like headers ---'
-          CSS_ASSET="$(grep -oE 'href="/assets/[^"]+\.css"' /tmp/sentinel-index.html | head -1 | cut -d'"' -f2)"
+          if [ -f /tmp/sentinel-index.html ]; then
+            CSS_ASSET="$(grep -oE 'href="/assets/[^"]+\.css"' /tmp/sentinel-index.html | head -1 | cut -d'"' -f2)"
+          else
+            CSS_ASSET=""
+          fi
           if [ -n "$CSS_ASSET" ]; then
             echo "CSS asset: $CSS_ASSET"
             curl -sS -D - -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36' -H 'Accept: text/css,*/*;q=0.1' "http://127.0.0.1:3002$CSS_ASSET" -o /tmp/browser-css.out || true
