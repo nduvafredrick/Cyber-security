@@ -26,7 +26,7 @@ function readLegacy(name){
 function migrateLegacy(){
   if(db.prepare('SELECT COUNT(*) count FROM events').get().count===0){
     const legacy=readLegacy('events.json');
-    const stmt=db.prepare("INSERT OR IGNORE INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata) VALUES (@id,@organization_id,@timestamp,@severity,@category,@event_type,@source_ip,@message,@hostname,@metadata)");
+    const stmt=db.prepare("INSERT OR IGNORE INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata,agent_id) VALUES (@id,@organization_id,@timestamp,@severity,@category,@event_type,@source_ip,@message,@hostname,@metadata,@agent_id)");
     const tx=db.transaction(items=>items.slice(-10000).forEach(e=>stmt.run({...e,organization_id:DEFAULT_ORGANIZATION_ID})));
     tx(legacy.map(e=>({...e,event_type:e.event_type||'generic',metadata:e.metadata||'{}'})));
   }
@@ -310,6 +310,7 @@ function rotateAgent(id,organizationId){
   db.prepare('DELETE FROM agent_enrollment_tokens WHERE agent_id=?').run(id);
   return getAgent(id,organizationId);
 }
+function touchIntegration(id,organizationId){requireOrganization(organizationId);db.prepare("UPDATE integrations SET last_seen_at=?,updated_at=? WHERE id=? AND organization_id=? AND status='ACTIVE'").run(now(),now(),id,organizationId)}
 function deleteAgent(id,organizationId){
   requireOrganization(organizationId);
   return db.prepare('DELETE FROM agents WHERE id=? AND organization_id=?').run(id,organizationId).changes>0;
@@ -364,6 +365,7 @@ module.exports={
   setAgentStatus,
   rotateAgent,
   deleteAgent,
+  touchIntegration,
   claimIngestBatch,
   incrementAgentEvents,
   listRules,
