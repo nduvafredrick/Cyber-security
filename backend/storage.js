@@ -62,7 +62,7 @@ if(db.prepare('SELECT COUNT(*) count FROM detection_rules WHERE organization_id=
 }
 
 const insertEvent=db.prepare("INSERT OR REPLACE INTO events(id,organization_id,timestamp,severity,category,event_type,source_ip,message,hostname,metadata,agent_id) VALUES (@id,@organization_id,@timestamp,@severity,@category,@event_type,@source_ip,@message,@hostname,@metadata,@agent_id)");
-const insertMany=db.transaction(items=>{for(const e of items)insertEvent.run(e)});
+const insertMany=db.transaction(items=>{for(const e of items)insertEvent.run({...e,event_type:e.event_type||'generic',metadata:typeof e.metadata==='string'?e.metadata:JSON.stringify(e.metadata||{}),agent_id:e.agent_id||null})});
 
 function prune(){
   const cutoff=new Date(Date.now()-retentionDays*86400000).toISOString();
