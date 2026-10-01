@@ -289,8 +289,8 @@ function enrollAgent(tokenHash,input){
     return getAgent(row.agent_id,row.organization_id);
   })();
 }
-function getAgentByCredentialHash(credentialHash){
-  return db.prepare("SELECT * FROM agents WHERE credential_hash=? AND status='active'").get(credentialHash)||null;
+function getAgentByCredential(agentId,credentialHash){
+  return db.prepare("SELECT * FROM agents WHERE id=? AND credential_hash=? AND status='active'").get(agentId,credentialHash)||null;
 }
 function updateAgentHeartbeat(agentId,input){
   const t=now();
@@ -359,7 +359,7 @@ module.exports={
   listAgents,
   createEnrollmentToken,
   enrollAgent,
-  getAgentByCredentialHash,
+  getAgentByCredential,
   updateAgentHeartbeat,
   setAgentStatus,
   rotateAgent,
