@@ -4,6 +4,7 @@ const fs=require('fs');
 const os=require('os');
 const path=require('path');
 const bcrypt=require('bcryptjs');
+const crypto=require('crypto');
 
 function freshEnv(dir){
   process.env.NODE_ENV='test';
