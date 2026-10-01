@@ -161,3 +161,22 @@ test('SQLite organization provisioning creates the administrator and connector a
   assert.equal(store.getAudit('org-provision-test')[0].action,'ORGANIZATION_CREATED');
   store.db.close();
 });
+
+test('SQLite integration provisioning binds the connector to one organization',()=>{
+  const {store}=makeStore();
+  const result=store.createIntegrationWithKey({
+    id:'integration-test',
+    organization_id:store.DEFAULT_ORGANIZATION_ID,
+    name:'Test Sentinel Agent',
+    type:'agent',
+    environment:'Production',
+    key_id:'integration-key-test',
+    key_raw:'sk_integration-test'
+  });
+  assert.equal(result.integration.organization_id,store.DEFAULT_ORGANIZATION_ID);
+  assert.equal(result.integration.type,'agent');
+  assert.equal(result.key.key_id,'integration-key-test');
+  assert.equal(store.listIntegrations(store.DEFAULT_ORGANIZATION_ID).length,1);
+  assert.equal(store.getIntegration('integration-test',store.DEFAULT_ORGANIZATION_ID).name,'Test Sentinel Agent');
+  store.db.close();
+});
